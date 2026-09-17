@@ -49,7 +49,10 @@ public:
 
 BLUE_DEFINE_TYPE_TRAIT( int64_t, Be::INT64 );
 BLUE_DEFINE_TYPE_TRAIT( uint64_t, Be::UINT64 );
-#if defined(_MSC_VER) || defined(__ANDROID__)
+// bionic spells int64_t as long on 64-bit Android, so a separate long specialisation is a
+// redefinition of the int64_t one. Apple uses long long and Windows keeps long at 32 bits,
+// and 32-bit Android needs it too -- so only arm64 Android is excluded here.
+#if defined(_MSC_VER) || ( defined(__ANDROID__) && !defined(__LP64__) )
 BLUE_DEFINE_TYPE_TRAIT( long, Be::LONG );
 BLUE_DEFINE_TYPE_TRAIT( unsigned long, Be::ULONG );
 #endif
