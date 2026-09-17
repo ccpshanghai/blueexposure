@@ -11,7 +11,7 @@
 
 #include "BlueTypes.h"
 
-BLUE_INTERFACE(IPythonMethods) : public IRoot
+BLUE_INTERFACE_ANCHORED(IPythonMethods) : public IRoot
 {
 	virtual void Destroy(
 		) = 0;
@@ -30,6 +30,9 @@ BLUE_INTERFACE(IPythonMethods) : public IRoot
 	virtual PyObject* Repr(
 		bool* handled
 		) = 0;
+
+	// Key function; see BLUE_INTERFACE_ANCHOR in BlueTypes.h. Last on purpose.
+	BLUE_INTERFACE_ANCHOR();
 };
 
 #endif // IPythonMethods_h

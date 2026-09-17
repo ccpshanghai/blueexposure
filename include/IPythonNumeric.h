@@ -52,7 +52,7 @@ enum PYNUMERIC_OPS
 	PYOP_COERCE		= 41,	// supported
 };
 
-BLUE_INTERFACE(IPythonNumeric) : public IRoot
+BLUE_INTERFACE_ANCHORED(IPythonNumeric) : public IRoot
 {
 	// If the functions return 'false', the op is not supported.
 	// '*retval' is always set to NULL prior to call, and if it's
@@ -73,6 +73,9 @@ BLUE_INTERFACE(IPythonNumeric) : public IRoot
 		PyObject* from,
 		PyObject** to
 		) = 0;
+
+	// Key function; see BLUE_INTERFACE_ANCHOR in BlueTypes.h. Last on purpose.
+	BLUE_INTERFACE_ANCHOR();
 };
 
 
