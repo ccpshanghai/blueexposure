@@ -569,6 +569,39 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 	BLUE_DECLARE_INTERFACE_EXPORT( _interface ); \
 	struct BLUE_NOVTABLE _interface
 
+// An interface that blue itself dynamic_casts to -- from code compiled into blue.so, on an
+// object created in another shared object -- has to keep its vtable and typeinfo in one
+// place. A pure interface has no key function, so every library that uses it emits its own
+// weak copy of both; the NDK's libc++abi compares std::type_info by address
+// (_LIBCPP_TYPEINFO_COMPARISON_IMPLEMENTATION 1) and bionic binds a library's own copy
+// ahead of blue.so's, so dynamic_cast<IList*> inside blue.so is nullptr for every list the
+// engine creates, and the thunker that trusted it calls a method on null (M6: the app's
+// first run on Android died in IList_Thunk::Pyappend). MSVC compares type_info by name and
+// Apple's arm64 ABI flags such copies non-unique, which is why neither ever noticed.
+//
+// BLUE_INTERFACE_ANCHOR declares one non-pure virtual -- the class's key function -- so the
+// vtable and typeinfo are emitted only where BLUE_DEFINE_INTERFACE_ANCHOR defines it
+// (InterfaceDefinitions.cpp, inside blue), and BLUE_INTERFACE_VISIBILITY exports them so
+// every other library imports that one copy instead of making its own. The slot is last in
+// each interface and does nothing; the rest of every implementer's vtable is unchanged.
+#if defined(__GNUC__) || defined(__clang__)
+#define BLUE_INTERFACE_VISIBILITY __attribute__((visibility("default")))
+#else
+#define BLUE_INTERFACE_VISIBILITY
+#endif
+
+#define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor()
+#define BLUE_DEFINE_INTERFACE_ANCHOR( _interface ) void _interface::BlueInterfaceAnchor() {}
+
+// Define a Blue interface whose vtable and typeinfo live in blue (see BLUE_INTERFACE_ANCHOR)
+#define BLUE_INTERFACE_ANCHORED( _interface ) \
+	BLUE_DECLARE_INTERFACE( _interface ); \
+	struct BLUE_INTERFACE_VISIBILITY BLUE_NOVTABLE _interface
+
+#define BLUE_INTERFACE_EXPORT_ANCHORED( _interface ) \
+	BLUE_DECLARE_INTERFACE_EXPORT( _interface ); \
+	struct BLUE_INTERFACE_VISIBILITY BLUE_NOVTABLE _interface
+
 // Forward declare a Blue class
 #define BLUE_DECLARE( _classname ) \
 class _classname; \

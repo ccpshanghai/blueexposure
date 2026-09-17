@@ -66,7 +66,7 @@ BLUE_INTERFACE(IListNotify) : public IRoot
 };
 
 
-BLUE_INTERFACE_EXPORT(IList) : public IRoot
+BLUE_INTERFACE_EXPORT_ANCHORED(IList) : public IRoot
 {
 
     //--------------------------------------------------------------------
@@ -162,6 +162,9 @@ BLUE_INTERFACE_EXPORT(IList) : public IRoot
     // Returns a pointer to the first element and list size. Implementations
     // that don't use continious memory for storing items may return (nullptr, size).
     virtual std::pair<IRoot* const*, ssize_t> GetAllItems() const = 0;
+
+    // Key function; see BLUE_INTERFACE_ANCHOR in BlueTypes.h. Last on purpose.
+    BLUE_INTERFACE_ANCHOR();
 };
 
 
