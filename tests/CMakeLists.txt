@@ -60,12 +60,13 @@ target_link_libraries(BlueExposureTest
 set_target_properties(BlueExposureTest PROPERTIES
     FOLDER "Tests"
     OUTPUT_NAME "_blueexposuretest"
+    PREFIX ""
 )
 
 # Construct python path for tests
 if(WIN32)
     set(PYTHONPATH_ENV "$<TARGET_FILE_DIR:BlueExposureTest>\;${CMAKE_CURRENT_SOURCE_DIR}/python")
-elseif(APPLE)
+elseif(APPLE OR UNIX)
     set(PYTHONPATH_ENV "$<TARGET_FILE_DIR:BlueExposureTest>:${CMAKE_CURRENT_SOURCE_DIR}/python")
 endif()
 
@@ -95,7 +96,7 @@ foreach(PYTHON_TEST ${PYTHON_TESTS})
     )
     if(WIN32)
         set_tests_properties(${PYTHON_TEST} PROPERTIES ENVIRONMENT "PYTHONPATH=${PYTHONPATH_ENV};BUILDFLAVOR=$<LOWER_CASE:$<CONFIG>>")
-    elseif(APPLE)
+    elseif(APPLE OR UNIX)
         set_tests_properties(${PYTHON_TEST} PROPERTIES ENVIRONMENT "PYTHONPATH=${PYTHONPATH_ENV};BUILDFLAVOR=$<LOWER_CASE:$<CONFIG>>")
     else()
         message(FATAL_ERROR "Unsupported platform")

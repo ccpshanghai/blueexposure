@@ -38,4 +38,17 @@ elseif(APPLE)
             PROPERTIES
             ENVIRONMENT "PYTHON_PREFIX=${VCPKG_IMPORT_PREFIX}"
     )
+elseif(UNIX)
+    # Linux: the interpreter's prefix is two levels above tools/python3/python3 in a vcpkg tree,
+    # and one level above bin/python3 in a system install; ask the interpreter itself
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import sys; print(sys.prefix)"
+        OUTPUT_VARIABLE BLUE_PYTHON_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    gtest_discover_tests(
+            BlueExposureCppUnitTests
+            PROPERTIES
+            ENVIRONMENT "PYTHON_PREFIX=${BLUE_PYTHON_PREFIX}"
+    )
 endif ()
