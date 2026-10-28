@@ -13,6 +13,9 @@
  *   - Outputs (a thunk's out value, BlueCError.message) belong to the caller and are freed
  *     with BlueCValueRelease / BlueCErrorClear. An object or callback in an output value carries
  *     one reference (+1).
+ *   - A host callback's result (its out value and err.message) goes the other way: blue takes
+ *     it over and frees it, so the host builds it with blue's allocation helpers (see Callbacks
+ *     into the host below). Blue never frees memory the host allocated.
  *   - Strings are UTF-8 with an explicit length. Strings blue produces are additionally
  *     NUL-terminated; strings passed in need not be.
  */
@@ -164,11 +167,32 @@ typedef struct BlueCMethodDef
  * Callbacks into the host. The host wraps one in a BlueCallbackHandle (BlueCCallbackCreate,
  * holding one reference) and passes the handle in BLUE_VK_CALLBACK values. destroy (may be
  * null) is called exactly once, when the last reference - the host's or blue's - is released.
- * fn gets the arguments borrowed for the duration of the call, on the thread blue calls it from.
+ *
+ * fn is called on the thread blue calls it from, with:
+ *   - args borrowed for the duration of the call;
+ *   - out and err never null. out is BLUE_VK_NONE and err is { BLUE_OK, null, 0 } on entry.
+ * It returns BLUE_OK or a negative BlueCStatus. Any status other than BLUE_OK is a failure; a
+ * positive one is reported as BLUE_E_FAILED.
+ *
+ * Returning a value: fn writes it to out, and gives it to blue. Blue converts what it needs and
+ * then frees the value with BlueCValueRelease - also when the call failed, or the value has the
+ * wrong kind - so everything in it must be freeable by blue:
+ *   - strings, arrays and maps are allocated with blue's helpers (BlueCValueSetString,
+ *     BlueCValueSetArray, BlueCValueSetMap; the Blue C API re-exports them), never with the
+ *     host's allocator. Items of an array or map are filled in place, the same way;
+ *   - an object carries one reference that blue takes over (add one first to keep your own);
+ *   - a callback handle likewise carries one reference (BlueCCallbackCreate, or an added one);
+ *   - a matrix is returned as an ARRAY of 16 numbers (u.vec holds at most four components).
+ *
+ * Reporting failure: fn returns the status and may describe it in err, with a message allocated
+ * by blue (BlueCSetErrorMessage, re-exported by the Blue C API), never by the host. Without a
+ * message blue reports the status alone. err is ignored when fn returns BLUE_OK.
  *------------------------------------------------------------------------------------------*/
+typedef int32_t ( *BlueCCallbackFn )( void* user_data, const BlueCValue* args, uint32_t argc, BlueCValue* out, BlueCError* err );
+
 typedef struct BlueCCallback
 {
-	void ( *fn )( void* user_data, const BlueCValue* args, uint32_t argc );
+	BlueCCallbackFn fn;
 	void* user_data;
 	void ( *destroy )( void* user_data );
 } BlueCCallback;
@@ -207,6 +231,9 @@ BLUE_CABI_STATIC_ASSERT( offsetof( BlueCError, message ) == 8, "BlueCError.messa
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCError, message_len ) == 16, "BlueCError.message_len offset" );
 BLUE_CABI_STATIC_ASSERT( sizeof( BlueCMethodDef ) == 32, "BlueCMethodDef must be 32 bytes" );
 BLUE_CABI_STATIC_ASSERT( sizeof( BlueCCallback ) == 24, "BlueCCallback must be 24 bytes" );
+BLUE_CABI_STATIC_ASSERT( offsetof( BlueCCallback, fn ) == 0, "BlueCCallback.fn offset" );
+BLUE_CABI_STATIC_ASSERT( offsetof( BlueCCallback, user_data ) == 8, "BlueCCallback.user_data offset" );
+BLUE_CABI_STATIC_ASSERT( offsetof( BlueCCallback, destroy ) == 16, "BlueCCallback.destroy offset" );
 #endif
 
 #endif /* BlueCAbi_h */

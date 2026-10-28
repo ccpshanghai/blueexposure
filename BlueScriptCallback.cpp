@@ -338,9 +338,15 @@ BLUEIMPORT BlueScriptCallbackStatus BlueScriptCallback::CallVoid()
 }
 
 #if BLUE_CABI_CALLBACKS
-BlueScriptCallbackStatus BlueScriptCallback::CallReturningValueC()
+BlueScriptCallbackStatus BlueScriptCallback::FailedC( const BlueCError& error )
 {
-	return BlueScriptCallbackStatus( BlueScriptCallbackStatus::CALL_ERROR, "a C callback cannot return a value" );
+	if( error.message )
+	{
+		return BlueScriptCallbackStatus( BlueScriptCallbackStatus::CALL_ERROR, error.message );
+	}
+	// Out of memory for the message
+	const std::string message = "status " + std::to_string( error.code );
+	return BlueScriptCallbackStatus( BlueScriptCallbackStatus::CALL_ERROR, message.c_str() );
 }
 #endif
 

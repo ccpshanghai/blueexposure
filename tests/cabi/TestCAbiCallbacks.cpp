@@ -8,7 +8,9 @@
 #include "TestCallbacks.h"
 #include "TestMethods.h"
 
+#include <functional>
 #include <set>
+#include <stdexcept>
 
 using namespace CAbiTest;
 
@@ -25,9 +27,14 @@ struct Recorder
 	std::vector<double> doubles;
 	std::vector<std::string> strings;
 	std::vector<IRoot*> objects;
+	// Whether every call got a non-null out preset to NONE and a non-null, clear err
+	bool cleanOutAndErr = true;
+
+	// What the callback returns; by default no value and BLUE_OK
+	std::function<int32_t( BlueCValue* out, BlueCError* err )> respond;
 };
 
-void RecordCall( void* userData, const BlueCValue* args, uint32_t argc )
+int32_t RecordCall( void* userData, const BlueCValue* args, uint32_t argc, BlueCValue* out, BlueCError* err )
 {
 	Recorder& recorder = *static_cast<Recorder*>( userData );
 	++recorder.calls;
@@ -54,6 +61,13 @@ void RecordCall( void* userData, const BlueCValue* args, uint32_t argc )
 			break;
 		}
 	}
+
+	const BlueCValue none = None();
+	if( !out || !err || memcmp( out, &none, sizeof( none ) ) != 0 || err->code != BLUE_OK || err->message || err->message_len )
+	{
+		recorder.cleanOutAndErr = false;
+	}
+	return recorder.respond ? recorder.respond( out, err ) : int32_t( BLUE_OK );
 }
 
 void RecordDestroy( void* userData )
@@ -86,6 +100,26 @@ struct HostCallback
 	}
 };
 
+// A host's way of returning a value: blue's string allocation
+int32_t ReturnString( BlueCValue* out, const char* s )
+{
+	return BlueCValueSetString( out, s, strlen( s ), nullptr );
+}
+
+// A host's way of returning an object: give blue a reference
+int32_t ReturnObject( BlueCValue* out, IRoot* obj )
+{
+	obj->Lock();
+	*out = Obj( obj );
+	return BLUE_OK;
+}
+
+// A host's way of failing: blue's message allocation
+int32_t Fail( BlueCError* err, int32_t code, const char* message )
+{
+	return BlueCSetErrorMessage( err, code, message, strlen( message ) );
+}
+
 } // namespace
 
 
@@ -106,8 +140,9 @@ TEST( CAbiCallbackHandle, DestroyedOnceByTheLastRelease )
 	EXPECT_EQ( stored->user_data, &recorder );
 	EXPECT_EQ( stored->destroy, &RecordDestroy );
 
-	BlueCCallbackInvoke( handle, nullptr, 0 );
+	EXPECT_EQ( BlueCCallbackInvoke( handle, nullptr, 0, nullptr, nullptr ), int32_t( BLUE_OK ) );
 	EXPECT_EQ( recorder.calls, 1 );
+	EXPECT_TRUE( recorder.cleanOutAndErr );
 
 	BlueCCallbackAddRef( handle );
 	BlueCCallbackRelease( handle );
@@ -118,8 +153,14 @@ TEST( CAbiCallbackHandle, DestroyedOnceByTheLastRelease )
 	// Null handles are ignored
 	BlueCCallbackAddRef( nullptr );
 	BlueCCallbackRelease( nullptr );
-	BlueCCallbackInvoke( nullptr, nullptr, 0 );
 	EXPECT_EQ( BlueCCallbackGet( nullptr ), nullptr );
+
+	// Invoking a null handle is an error
+	Result invalid;
+	invalid.out = Int( 5 );
+	invalid.status = BlueCCallbackInvoke( nullptr, nullptr, 0, &invalid.out, &invalid.err );
+	EXPECT_CABI_ERROR( invalid, BLUE_E_INVALID_ARGUMENT );
+	EXPECT_EQ( BlueCCallbackInvoke( nullptr, nullptr, 0, nullptr, nullptr ), int32_t( BLUE_E_INVALID_ARGUMENT ) );
 }
 
 TEST( CAbiCallbackHandle, NoDestroyFunction )
@@ -189,6 +230,275 @@ TEST( CAbiCallbackHandle, Extract )
 	// Extracting borrows: no reference taken
 	host.Release();
 	EXPECT_EQ( host.recorder.destroyed, 1 );
+}
+
+
+//--------------------------------------------------------------------
+// Invoking a handle: returned values and errors (every C-ABI flavour)
+//--------------------------------------------------------------------
+
+TEST( CAbiCallbackInvoke, ArgumentsAreBorrowed )
+{
+	HostCallback host;
+	const std::string text = "not NUL-terminated here";
+	BlueCValue args[] = { Int( 3 ), Str( text.data(), 3 ) };
+
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, args, 2, &r.out, &r.err );
+	EXPECT_CABI_OK( r );
+	EXPECT_EQ( r.Kind(), uint32_t( BLUE_VK_NONE ) );
+	EXPECT_EQ( host.recorder.kinds, ( std::vector<uint32_t>{ BLUE_VK_INT, BLUE_VK_STRING } ) );
+	EXPECT_EQ( host.recorder.strings, std::vector<std::string>{ "not" } );
+	EXPECT_TRUE( host.recorder.cleanOutAndErr );
+	// Untouched: still the caller's
+	EXPECT_EQ( args[1].u.str.ptr, text.data() );
+}
+
+TEST( CAbiCallbackInvoke, ReturnsTheValueToTheCaller )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue* out, BlueCError* ) { return ReturnString( out, "returned" ); };
+
+	Result r;
+	r.out = Int( 5 );	// overwritten, not released: the caller owns nothing in it
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_OK( r );
+	EXPECT_EQ( r.S(), "returned" );
+	EXPECT_EQ( r.err.message, nullptr );
+	EXPECT_TRUE( host.recorder.cleanOutAndErr );
+}
+
+TEST( CAbiCallbackInvoke, ValueIsReleasedWithoutOut )
+{
+	TestMethodsPtr object;
+	ASSERT_TRUE( object.CreateInstance() );
+	IRoot* obj = reinterpret_cast<IRoot*>( (TestMethods*)object );
+	const int refCount = obj->GetRefCount();
+
+	HostCallback host;
+	host.recorder.respond = [obj]( BlueCValue* out, BlueCError* ) { return ReturnObject( out, obj ); };
+	EXPECT_EQ( BlueCCallbackInvoke( host.handle, nullptr, 0, nullptr, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// With an out the caller gets the host's reference
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_OK( r );
+	EXPECT_EQ( r.O(), obj );
+	EXPECT_EQ( obj->GetRefCount(), refCount + 1 );
+	BlueCValueRelease( &r.out );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+}
+
+TEST( CAbiCallbackInvoke, ErrorCarriesTheCallbacksMessage )
+{
+	TestMethodsPtr object;
+	ASSERT_TRUE( object.CreateInstance() );
+	IRoot* obj = reinterpret_cast<IRoot*>( (TestMethods*)object );
+	const int refCount = obj->GetRefCount();
+
+	// A value written before failing is still released, once
+	HostCallback host;
+	host.recorder.respond = [obj]( BlueCValue* out, BlueCError* err ) {
+		ReturnObject( out, obj );
+		return Fail( err, BLUE_E_NOT_FOUND, "no such thing" );
+	};
+
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_ERROR( r, BLUE_E_NOT_FOUND );
+	EXPECT_EQ( r.Message(), "no such thing" );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Without an err only the status comes back
+	EXPECT_EQ( BlueCCallbackInvoke( host.handle, nullptr, 0, nullptr, nullptr ), int32_t( BLUE_E_NOT_FOUND ) );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+}
+
+TEST( CAbiCallbackInvoke, StatusIsTheCode )
+{
+	// The returned status wins over a different code in err
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue*, BlueCError* err ) {
+		Fail( err, BLUE_E_TYPE, "mismatch" );
+		return int32_t( BLUE_E_OVERFLOW );
+	};
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_ERROR( r, BLUE_E_OVERFLOW );
+	EXPECT_EQ( r.Message(), "mismatch" );
+}
+
+TEST( CAbiCallbackInvoke, ErrorWithoutMessage )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue*, BlueCError* ) { return int32_t( BLUE_E_FAILED ); };
+	Result failed;
+	failed.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &failed.out, &failed.err );
+	EXPECT_CABI_ERROR( failed, BLUE_E_FAILED );
+	EXPECT_EQ( failed.Message(), "callback failed with status -1" );
+
+	// A positive status is a failure too
+	host.recorder.respond = []( BlueCValue*, BlueCError* ) { return int32_t( 3 ); };
+	Result positive;
+	positive.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &positive.out, &positive.err );
+	EXPECT_CABI_ERROR( positive, BLUE_E_FAILED );
+	EXPECT_EQ( positive.Message(), "callback failed with status -1" );
+}
+
+TEST( CAbiCallbackInvoke, ErrIsIgnoredOnSuccess )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue* out, BlueCError* err ) {
+		Fail( err, BLUE_E_FAILED, "ignored" );
+		BlueCValueSetNone( *out );
+		out->kind = BLUE_VK_INT;
+		out->u.i = 9;
+		return int32_t( BLUE_OK );
+	};
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_OK( r );
+	EXPECT_EQ( r.err.code, int32_t( BLUE_OK ) );
+	EXPECT_EQ( r.err.message, nullptr );
+	EXPECT_EQ( r.I(), 9 );
+}
+
+TEST( CAbiCallbackInvoke, ExceptionFromACppHost )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue*, BlueCError* ) -> int32_t { throw std::runtime_error( "host bug" ); };
+	Result r;
+	r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+	EXPECT_CABI_ERROR( r, BLUE_E_EXCEPTION );
+}
+
+TEST( CAbiCallbackInvoke, NestedValuesAreReleasedOnce )
+{
+	TestMethodsPtr object;
+	ASSERT_TRUE( object.CreateInstance() );
+	IRoot* obj = reinterpret_cast<IRoot*>( (TestMethods*)object );
+	const int refCount = obj->GetRefCount();
+	HostCallback inner;
+
+	// { "k": [ object, callback, "s" ] }, every allocation blue's, every reference given to blue
+	HostCallback host;
+	BlueCallbackHandle* innerHandle = inner.handle;
+	host.recorder.respond = [obj, innerHandle]( BlueCValue* out, BlueCError* err ) {
+		int32_t status = BlueCValueSetMap( out, 1, err );
+		if( status != BLUE_OK )
+		{
+			return status;
+		}
+		BlueCValue* kv = out->u.map.kv;
+		ReturnString( &kv[0], "k" );
+		status = BlueCValueSetArray( &kv[1], 3, err );
+		if( status != BLUE_OK )
+		{
+			return status;
+		}
+		BlueCValue* items = kv[1].u.arr.items;
+		ReturnObject( &items[0], obj );
+		BlueCCallbackAddRef( innerHandle );
+		items[1] = Callback( innerHandle );
+		ReturnString( &items[2], "s" );
+		return int32_t( BLUE_OK );
+	};
+
+	// Discarded
+	EXPECT_EQ( BlueCCallbackInvoke( host.handle, nullptr, 0, nullptr, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Returned, then released by the caller
+	{
+		Result r;
+		r.status = BlueCCallbackInvoke( host.handle, nullptr, 0, &r.out, &r.err );
+		ASSERT_CABI_OK( r );
+		ASSERT_EQ( r.Kind(), uint32_t( BLUE_VK_MAP ) );
+		ASSERT_EQ( r.out.u.map.count, size_t( 1 ) );
+		EXPECT_EQ( AsString( r.out.u.map.kv[0] ), "k" );
+		const BlueCValue& list = r.out.u.map.kv[1];
+		ASSERT_EQ( list.kind, uint32_t( BLUE_VK_ARRAY ) );
+		ASSERT_EQ( list.u.arr.count, size_t( 3 ) );
+		EXPECT_EQ( list.u.arr.items[0].u.obj, Obj( obj ).u.obj );
+		EXPECT_EQ( list.u.arr.items[1].u.callback, innerHandle );
+		EXPECT_EQ( AsString( list.u.arr.items[2] ), "s" );
+		EXPECT_EQ( obj->GetRefCount(), refCount + 1 );
+	}
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Only the host's own reference is left: one release destroys the callback, once
+	inner.Release();
+	EXPECT_EQ( inner.recorder.destroyed, 1 );
+}
+
+TEST( CAbiValueBuilders, StringArrayMap )
+{
+	BlueCValue v;
+	BlueCValueSetNone( v );
+
+	const char text[] = { 'a', 'b', 'c' };
+	EXPECT_EQ( BlueCValueSetString( &v, text, 2, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( AsString( v ), "ab" );
+	BlueCValueRelease( &v );
+
+	EXPECT_EQ( BlueCValueSetString( &v, nullptr, 0, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( AsString( v ), "" );
+	BlueCValueRelease( &v );
+
+	EXPECT_EQ( BlueCValueSetArray( &v, 2, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_ARRAY ) );
+	ASSERT_EQ( v.u.arr.count, size_t( 2 ) );
+	EXPECT_EQ( v.u.arr.items[0].kind, uint32_t( BLUE_VK_NONE ) );
+	EXPECT_EQ( v.u.arr.items[1].kind, uint32_t( BLUE_VK_NONE ) );
+	BlueCValueRelease( &v );
+
+	EXPECT_EQ( BlueCValueSetArray( &v, 0, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_ARRAY ) );
+	EXPECT_EQ( v.u.arr.count, size_t( 0 ) );
+	BlueCValueRelease( &v );
+
+	EXPECT_EQ( BlueCValueSetMap( &v, 2, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_MAP ) );
+	ASSERT_EQ( v.u.map.count, size_t( 2 ) );
+	for( size_t i = 0; i < 4; ++i )
+	{
+		EXPECT_EQ( v.u.map.kv[i].kind, uint32_t( BLUE_VK_NONE ) );
+	}
+	BlueCValueRelease( &v );
+}
+
+TEST( CAbiValueBuilders, Errors )
+{
+	Result nullOut, nullString, tooMany;
+	nullOut.status = BlueCValueSetString( nullptr, "x", 1, &nullOut.err );
+	EXPECT_EQ( nullOut.status, int32_t( BLUE_E_INVALID_ARGUMENT ) );
+	EXPECT_EQ( BlueCValueSetArray( nullptr, 1, nullptr ), int32_t( BLUE_E_INVALID_ARGUMENT ) );
+	EXPECT_EQ( BlueCValueSetMap( nullptr, 1, nullptr ), int32_t( BLUE_E_INVALID_ARGUMENT ) );
+
+	nullString.status = BlueCValueSetString( &nullString.out, nullptr, 4, &nullString.err );
+	EXPECT_CABI_ERROR( nullString, BLUE_E_INVALID_ARGUMENT );
+
+	tooMany.status = BlueCValueSetMap( &tooMany.out, std::numeric_limits<size_t>::max(), &tooMany.err );
+	EXPECT_CABI_ERROR( tooMany, BLUE_E_OUT_OF_MEMORY );
+}
+
+TEST( CAbiValueBuilders, ErrorMessage )
+{
+	Result r;
+	const char text[] = { 'b', 'a', 'd', '!' };
+	EXPECT_EQ( BlueCSetErrorMessage( &r.err, BLUE_E_FAILED, text, 3 ), int32_t( BLUE_E_FAILED ) );
+	EXPECT_EQ( r.err.code, int32_t( BLUE_E_FAILED ) );
+	EXPECT_EQ( r.Message(), "bad" );
+	EXPECT_EQ( r.err.message[3], 0 );
+
+	// Replaces the previous message; a null message sets the code alone
+	EXPECT_EQ( BlueCSetErrorMessage( &r.err, BLUE_E_TYPE, nullptr, 5 ), int32_t( BLUE_E_TYPE ) );
+	EXPECT_EQ( r.err.code, int32_t( BLUE_E_TYPE ) );
+	EXPECT_EQ( r.err.message, nullptr );
+	EXPECT_EQ( r.err.message_len, size_t( 0 ) );
+
+	EXPECT_EQ( BlueCSetErrorMessage( nullptr, BLUE_E_TYPE, "x", 1 ), int32_t( BLUE_E_TYPE ) );
 }
 
 
@@ -303,28 +613,68 @@ TEST( CAbiCallbacks, DestroyedWithTheObject )
 	EXPECT_EQ( LiveCount<TestCallbacks>(), 0u );
 }
 
-TEST( CAbiCallbacks, ReturnValuesAreUnsupported )
+TEST( CAbiCallbacks, ReturnValuesThroughThunks )
 {
 	TestCallbacksPtr callbacks;
 	ASSERT_TRUE( callbacks.CreateInstance() );
 	HostCallback host;
+	host.recorder.respond = [&host]( BlueCValue* out, BlueCError* ) {
+		// CallCallbackInt has no arguments; CallCallbackStringInt passes one int
+		if( host.recorder.kinds.empty() )
+		{
+			*out = Int( 42 );
+			return int32_t( BLUE_OK );
+		}
+		return ReturnString( out, "five" );
+	};
 
 	Result set;
 	Call( set, (TestCallbacks*)callbacks, "SetCallback", { Callback( host.handle ) } );
 	ASSERT_CABI_OK( set );
 
-	// A C callback returns nothing: Call( result, ... ) fails without calling it and leaves
-	// the preset result
 	Result pairInt, pairString;
 	Call( pairInt, (TestCallbacks*)callbacks, "CallCallbackInt" );
 	Call( pairString, (TestCallbacks*)callbacks, "CallCallbackStringInt", { Int( 5 ) } );
-	EXPECT_CABI_OK( pairInt );
+	ASSERT_CABI_OK( pairInt );
 	ASSERT_EQ( pairInt.out.u.arr.count, size_t( 2 ) );
-	EXPECT_EQ( pairInt.out.u.arr.items[0].u.i, 0 );
-	EXPECT_EQ( pairInt.out.u.arr.items[1].u.i, int64_t( int( 0xDeadBeef ) ) );
-	EXPECT_CABI_OK( pairString );
-	EXPECT_EQ( pairString.out.u.arr.items[0].u.i, 0 );
-	EXPECT_EQ( host.recorder.calls, 0 );
+	EXPECT_EQ( pairInt.out.u.arr.items[0].u.i, 1 );
+	EXPECT_EQ( pairInt.out.u.arr.items[1].u.i, 42 );
+	ASSERT_CABI_OK( pairString );
+	ASSERT_EQ( pairString.out.u.arr.count, size_t( 2 ) );
+	EXPECT_EQ( pairString.out.u.arr.items[0].u.i, 1 );
+	EXPECT_EQ( AsString( pairString.out.u.arr.items[1] ), "five" );
+	EXPECT_EQ( host.recorder.ints, std::vector<int64_t>{ 5 } );
+	EXPECT_EQ( host.recorder.calls, 2 );
+}
+
+TEST( CAbiCallbacks, FailuresThroughThunks )
+{
+	TestCallbacksPtr callbacks;
+	ASSERT_TRUE( callbacks.CreateInstance() );
+	HostCallback host;
+	Result set;
+	Call( set, (TestCallbacks*)callbacks, "SetCallback", { Callback( host.handle ) } );
+	ASSERT_CABI_OK( set );
+
+	// The callback fails: the exposed method sees a false status and keeps its preset result
+	host.recorder.respond = []( BlueCValue*, BlueCError* err ) { return Fail( err, BLUE_E_FAILED, "host says no" ); };
+	Result failedVoid, failedInt;
+	Call( failedVoid, (TestCallbacks*)callbacks, "CallCallbackVoid" );
+	Call( failedInt, (TestCallbacks*)callbacks, "CallCallbackInt" );
+	EXPECT_CABI_OK( failedVoid );
+	EXPECT_EQ( failedVoid.I(), 0 );
+	ASSERT_CABI_OK( failedInt );
+	EXPECT_EQ( failedInt.out.u.arr.items[0].u.i, 0 );
+	EXPECT_EQ( failedInt.out.u.arr.items[1].u.i, int64_t( int( 0xDeadBeef ) ) );
+
+	// The wrong kind of value fails the same way
+	host.recorder.respond = []( BlueCValue* out, BlueCError* ) { return ReturnString( out, "not an int" ); };
+	Result wrongKind;
+	Call( wrongKind, (TestCallbacks*)callbacks, "CallCallbackIntStringFloat", { Str( "a" ), Double( 1.5 ) } );
+	ASSERT_CABI_OK( wrongKind );
+	EXPECT_EQ( wrongKind.out.u.arr.items[0].u.i, 0 );
+	EXPECT_EQ( wrongKind.out.u.arr.items[1].u.i, int64_t( int( 0xDeadBeef ) ) );
+	EXPECT_EQ( host.recorder.calls, 3 );
 }
 
 TEST( CAbiCallbacks, WrongKindIsATypeError )
@@ -445,6 +795,197 @@ TEST( CAbiCallbacks, CopiesShareTheHandle )
 		EXPECT_EQ( host.recorder.calls, 1 );
 	}
 	EXPECT_EQ( host.recorder.destroyed, 1 );
+}
+
+TEST( CAbiCallbacks, CallReturnsAnInt )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue* out, BlueCError* ) {
+		*out = Int( 42 );
+		return int32_t( BLUE_OK );
+	};
+	BlueScriptCallback callback( host.handle );
+
+	int result = 0;
+	auto status = callback.Call( result, std::string( "arg" ) );
+	EXPECT_TRUE( bool( status ) );
+	EXPECT_TRUE( status.GetErrorMessage().empty() );
+	EXPECT_EQ( result, 42 );
+	EXPECT_EQ( host.recorder.strings, std::vector<std::string>{ "arg" } );
+
+	// Out of range for the C++ type
+	host.recorder.respond = []( BlueCValue* out, BlueCError* ) {
+		*out = Int( int64_t( 1 ) << 40 );
+		return int32_t( BLUE_OK );
+	};
+	result = 7;
+	status = callback.Call( result );
+	EXPECT_FALSE( bool( status ) );
+	status.MuteException();
+	EXPECT_EQ( result, 7 );
+}
+
+TEST( CAbiCallbacks, CallReturnsAnObject )
+{
+	TestMethodsPtr object;
+	ASSERT_TRUE( object.CreateInstance() );
+	IRoot* obj = reinterpret_cast<IRoot*>( (TestMethods*)object );
+	const int refCount = obj->GetRefCount();
+
+	HostCallback host;
+	host.recorder.respond = [obj]( BlueCValue* out, BlueCError* ) { return ReturnObject( out, obj ); };
+	BlueScriptCallback callback( host.handle );
+
+	// The returned pointer carries a reference of its own, as with Python; the host's is released
+	TestMethods* result = nullptr;
+	auto status = callback.Call( result );
+	EXPECT_TRUE( bool( status ) );
+	EXPECT_EQ( result, (TestMethods*)object );
+	EXPECT_EQ( obj->GetRefCount(), refCount + 1 );
+	result->Unlock();
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// An object of the wrong class: type error, the host's reference released, result untouched
+	TestCallbacks* wrongClass = nullptr;
+	status = callback.Call( wrongClass );
+	EXPECT_FALSE( bool( status ) );
+	status.MuteException();
+	EXPECT_EQ( wrongClass, nullptr );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// None is a null pointer
+	host.recorder.respond = []( BlueCValue*, BlueCError* ) { return int32_t( BLUE_OK ); };
+	result = (TestMethods*)object;
+	status = callback.Call( result );
+	EXPECT_TRUE( bool( status ) );
+	EXPECT_EQ( result, nullptr );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+}
+
+TEST( CAbiCallbacks, CallbackErrorFailsTheCall )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue*, BlueCError* err ) { return Fail( err, BLUE_E_FAILED, "host says no" ); };
+	BlueScriptCallback callback( host.handle );
+
+	auto status = callback.CallVoid( 1 );
+	EXPECT_FALSE( bool( status ) );
+	EXPECT_EQ( status.GetErrorMessage(), "host says no" );
+	// Logged once by ReportException (here, and not again by the destructor)
+	status.ReportException();
+
+	int result = 3;
+	auto withResult = callback.Call( result );
+	EXPECT_FALSE( bool( withResult ) );
+	EXPECT_EQ( withResult.GetErrorMessage(), "host says no" );
+	withResult.MuteException();
+	EXPECT_EQ( result, 3 );
+
+	// Without a message the status is named
+	host.recorder.respond = []( BlueCValue*, BlueCError* ) { return int32_t( BLUE_E_NOT_FOUND ); };
+	auto bare = callback.CallVoid();
+	EXPECT_FALSE( bool( bare ) );
+	EXPECT_EQ( bare.GetErrorMessage(), "callback failed with status -9" );
+	bare.MuteException();
+	EXPECT_EQ( host.recorder.calls, 3 );
+}
+
+TEST( CAbiCallbacks, CallWrongKindIsACallError )
+{
+	HostCallback host;
+	host.recorder.respond = []( BlueCValue* out, BlueCError* ) { return ReturnString( out, "text" ); };
+	BlueScriptCallback callback( host.handle );
+
+	int result = 3;
+	auto status = callback.Call( result );
+	EXPECT_FALSE( bool( status ) );
+	EXPECT_EQ( status.GetErrorMessage(), "result: expected integer, got string" );
+	status.MuteException();
+	EXPECT_EQ( result, 3 );
+
+	// CallVoid ignores (and releases) whatever comes back
+	EXPECT_TRUE( bool( callback.CallVoid() ) );
+}
+
+TEST( CAbiCallbacks, ReturnedValuesAreReleasedOnce )
+{
+	TestMethodsPtr object;
+	ASSERT_TRUE( object.CreateInstance() );
+	IRoot* obj = reinterpret_cast<IRoot*>( (TestMethods*)object );
+	const int refCount = obj->GetRefCount();
+	HostCallback inner;
+	BlueCallbackHandle* innerHandle = inner.handle;
+
+	// [ object, callback, object ], each carrying a reference given to blue
+	HostCallback host;
+	host.recorder.respond = [obj, innerHandle]( BlueCValue* out, BlueCError* err ) {
+		const int32_t status = BlueCValueSetArray( out, 3, err );
+		if( status != BLUE_OK )
+		{
+			return status;
+		}
+		ReturnObject( &out->u.arr.items[0], obj );
+		BlueCCallbackAddRef( innerHandle );
+		out->u.arr.items[1] = Callback( innerHandle );
+		ReturnObject( &out->u.arr.items[2], obj );
+		return int32_t( BLUE_OK );
+	};
+	BlueScriptCallback callback( host.handle );
+
+	// Rejected part-way through: item 1 is a callback, not an object
+	std::vector<IRoot*> objects;
+	auto partial = callback.Call( objects );
+	EXPECT_FALSE( bool( partial ) );
+	EXPECT_EQ( partial.GetErrorMessage(), "result: expected object, got callback" );
+	partial.MuteException();
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Converted
+
+	host.recorder.respond = [obj, innerHandle]( BlueCValue* out, BlueCError* err ) {
+		const int32_t status = BlueCValueSetArray( out, 2, err );
+		if( status != BLUE_OK )
+		{
+			return status;
+		}
+		ReturnObject( &out->u.arr.items[0], obj );
+		BlueCCallbackAddRef( innerHandle );
+		out->u.arr.items[1] = Callback( innerHandle );
+		return int32_t( BLUE_OK );
+	};
+	std::pair<TestMethods*, BlueScriptCallback> pair;
+	auto ok = callback.Call( pair );
+	EXPECT_TRUE( bool( ok ) ) << ok.GetErrorMessage();
+	EXPECT_EQ( pair.first, (TestMethods*)object );
+	EXPECT_EQ( pair.second.GetCHandle(), innerHandle );
+	// The pair borrows the object (only top-level pointers get a reference) and holds its own
+	// reference to the callback; the returned value's references are gone
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+	pair = {};
+
+	// Rejected (wrong kind)
+	int wrong = 0;
+	auto rejected = callback.Call( wrong );
+	EXPECT_FALSE( bool( rejected ) );
+	rejected.MuteException();
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Failed after building the value
+	host.recorder.respond = [obj]( BlueCValue* out, BlueCError* err ) {
+		ReturnObject( out, obj );
+		return Fail( err, BLUE_E_FAILED, "late failure" );
+	};
+	TestMethods* none = nullptr;
+	auto failed = callback.Call( none );
+	EXPECT_FALSE( bool( failed ) );
+	failed.MuteException();
+	EXPECT_EQ( none, nullptr );
+	EXPECT_EQ( obj->GetRefCount(), refCount );
+
+	// Every returned callback reference was dropped: the host's last one destroys it, once
+	EXPECT_EQ( inner.recorder.destroyed, 0 );
+	inner.Release();
+	EXPECT_EQ( inner.recorder.destroyed, 1 );
 }
 
 #endif // BLUE_CABI_CALLBACKS

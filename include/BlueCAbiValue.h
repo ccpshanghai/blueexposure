@@ -94,7 +94,8 @@ BLUEIMPORT std::string BlueCTypeName( const char* typeidName );
 BLUEIMPORT void BlueCErrorClear( BlueCError* err );
 
 // Free everything a value owns (strings, items, object references) and reset it to NONE.
-// Only for values produced by blue (BlueCWrap, thunk outputs).
+// Only for values produced by blue (BlueCWrap, thunk outputs) or built with its allocation
+// helpers (BlueCValueSetString / Array / Map, as host callbacks return them).
 BLUEIMPORT void BlueCValueRelease( BlueCValue* value );
 
 // Name of a BlueCValueKind, for messages
@@ -183,8 +184,36 @@ BLUEIMPORT void BlueCCallbackAddRef( BlueCallbackHandle* handle );
 BLUEIMPORT void BlueCCallbackRelease( BlueCallbackHandle* handle );
 // The callback the handle was created from, so a host can recognise its own
 BLUEIMPORT const BlueCCallback* BlueCCallbackGet( const BlueCallbackHandle* handle );
-// Calls fn( user_data, args, argc ); args stay owned by the caller
-BLUEIMPORT void BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc );
+// Calls fn( user_data, args, argc, out, err ) as BlueCAbi.h describes; args stay owned by the
+// caller. Returns fn's status (a positive one as BLUE_E_FAILED, a null handle as
+// BLUE_E_INVALID_ARGUMENT, an exception escaping fn as BLUE_E_EXCEPTION). On success out (when
+// not null) holds the returned value, owned by the caller; a null out releases it. On failure
+// out is NONE, the returned value has been released, and err (when not null) holds fn's message,
+// or one naming the status when fn gave none.
+BLUEIMPORT int32_t BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc, BlueCValue* out, BlueCError* err );
+
+//--------------------------------------------------------------------
+// Building values and errors for blue (host callbacks, BlueCAbi.h)
+//
+// What a host callback returns is freed by blue, so its allocations must be blue's. These
+// overwrite out / err without releasing what was there; the Blue C API re-exports them.
+//--------------------------------------------------------------------
+
+// Set err to code with a copy of message[0, length) (UTF-8, need not be NUL-terminated); a null
+// message sets the code alone. Returns code. Out of memory keeps the code and drops the message.
+BLUEIMPORT int32_t BlueCSetErrorMessage( BlueCError* err, int32_t code, const char* message, size_t length );
+
+// STRING holding a NUL-terminated copy of utf8[0, length). Returns BLUE_OK, or an error (out is
+// then NONE): BLUE_E_INVALID_ARGUMENT for a null out, or a null utf8 with a length;
+// BLUE_E_OUT_OF_MEMORY.
+BLUEIMPORT int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, BlueCError* err );
+
+// ARRAY of count NONE items, for the caller to fill in place. Errors as BlueCValueSetString.
+BLUEIMPORT int32_t BlueCValueSetArray( BlueCValue* out, size_t count, BlueCError* err );
+
+// MAP of pairCount (NONE, NONE) pairs, for the caller to fill in place (kv[2n] key, kv[2n + 1]
+// value). Errors as BlueCValueSetString.
+BLUEIMPORT int32_t BlueCValueSetMap( BlueCValue* out, size_t pairCount, BlueCError* err );
 
 // Strict UTF-8 <-> wchar_t (UTF-32, or UTF-16 where wchar_t is 16 bits)
 BLUEIMPORT bool BlueCUtf8ToWide( const char* utf8, size_t length, std::wstring& result );

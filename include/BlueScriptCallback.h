@@ -29,6 +29,10 @@ public:
 	operator bool() const;
 	void MuteException();
 	void ReportException();
+#if BLUE_CABI_CALLBACKS
+	// Why the call failed (the callback's message, or a conversion error); empty on success
+	const std::string& GetErrorMessage() const { return m_message; }
+#endif
 private:
 	enum Status
 	{
@@ -61,9 +65,11 @@ private:
 //   BlueScriptCallback encapsulates script callback functions. One can store a script 
 //   function in BlueScriptCallback and subsequently call it from C++.
 //   With C-ABI as the only backend it holds a reference to a host callback handle
-//   (BlueCallbackHandle, BlueCAbi.h). The arguments are converted with BlueCWrap; a C
-//   callback returns no value, so the Call overloads with a return value fail with
-//   CALL_ERROR. Calls run on the calling thread, without any lock.
+//   (BlueCallbackHandle, BlueCAbi.h). The arguments are converted with BlueCWrap and the
+//   value a Call overload expects with BlueCExtract (CALL_ERROR on a mismatch, a returned
+//   Blue object pointer carrying a reference of its own, as with Python). A callback that
+//   reports failure makes the status CALL_ERROR, and its message is what ReportException
+//   logs. Calls run on the calling thread, without any lock.
 // --------------------------------------------------------------------------------------
 class BLUEIMPORT BlueScriptCallback
 {
@@ -130,9 +136,16 @@ private:
 	BlueCallbackHandle* m_callback;
 
 	template <typename... A>
+	bool InvokeC( BlueCValue* result, BlueCError& error, const A&... a );
+
+	template <typename... A>
 	BlueScriptCallbackStatus CallC( const A&... a );
 
-	static BlueScriptCallbackStatus CallReturningValueC();
+	template <typename Ret, typename... A>
+	BlueScriptCallbackStatus CallReturningC( Ret& returnValue, const A&... a );
+
+	// CALL_ERROR with error's message
+	static BlueScriptCallbackStatus FailedC( const BlueCError& error );
 #else
 	BlueScriptValue m_callback;
 #endif
@@ -196,7 +209,7 @@ BlueScriptCallbackStatus BlueScriptCallback::Call( Ret& returnValue )
 	}
 	return BlueScriptCallbackStatus::EXCEPTION;
 #elif BLUE_CABI_CALLBACKS
-	return CallReturningValueC();
+	return CallReturningC( returnValue );
 #else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
@@ -263,7 +276,7 @@ BlueScriptCallbackStatus BlueScriptCallback::Call( Ret& returnValue, A0 a0 )
 	}
 	return BlueScriptCallbackStatus::EXCEPTION;
 #elif BLUE_CABI_CALLBACKS
-	return CallReturningValueC();
+	return CallReturningC( returnValue, a0 );
 #else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
@@ -334,7 +347,7 @@ BlueScriptCallbackStatus BlueScriptCallback::Call( Ret& returnValue, A0 a0, A1 a
 	}
 	return BlueScriptCallbackStatus::EXCEPTION;
 #elif BLUE_CABI_CALLBACKS
-	return CallReturningValueC();
+	return CallReturningC( returnValue, a0, a1 );
 #else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
@@ -409,7 +422,7 @@ BlueScriptCallbackStatus BlueScriptCallback::Call( Ret& returnValue, A0 a0, A1 a
 	}
 	return BlueScriptCallbackStatus::EXCEPTION;
 #elif BLUE_CABI_CALLBACKS
-	return CallReturningValueC();
+	return CallReturningC( returnValue, a0, a1, a2 );
 #else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
@@ -488,7 +501,7 @@ BlueScriptCallbackStatus BlueScriptCallback::Call( Ret& returnValue, A0 a0, A1 a
 	}
 	return BlueScriptCallbackStatus::EXCEPTION;
 #elif BLUE_CABI_CALLBACKS
-	return CallReturningValueC();
+	return CallReturningC( returnValue, a0, a1, a2, a3 );
 #else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
@@ -616,9 +629,10 @@ BlueScriptCallbackStatus BlueScriptCallback::CallVoid( A0 a0, A1 a1, A2 a2, A3 a
 }
 
 #if BLUE_CABI_CALLBACKS
-// Calls the C callback with every argument wrapped as a BlueCValue
+// Wraps every argument as a BlueCValue and calls the C callback. result (null to discard it)
+// receives the returned value. On failure error says why.
 template <typename... A>
-BlueScriptCallbackStatus BlueScriptCallback::CallC( const A&... a )
+bool BlueScriptCallback::InvokeC( BlueCValue* result, BlueCError& error, const A&... a )
 {
 	// One more than needed, so that no arguments is not a zero-length array
 	BlueCValue args[sizeof...( A ) + 1];
@@ -626,13 +640,11 @@ BlueScriptCallbackStatus BlueScriptCallback::CallC( const A&... a )
 	{
 		BlueCValueSetNone( arg );
 	}
-	BlueCError error = { BLUE_OK, nullptr, 0 };
-	ON_BLOCK_EXIT( [&args, &error] {
+	ON_BLOCK_EXIT( [&args] {
 		for( BlueCValue& arg : args )
 		{
 			BlueCValueRelease( &arg );
 		}
-		BlueCErrorClear( &error );
 	} );
 
 	// Wrapped in order; argc counts the wrapped ones, so the first failure stops the rest
@@ -640,10 +652,49 @@ BlueScriptCallbackStatus BlueScriptCallback::CallC( const A&... a )
 	const bool wrapped = ( ( BlueCWrap( a, args[argc], &error ) && ++argc ) && ... );
 	if( !wrapped )
 	{
-		return BlueScriptCallbackStatus( BlueScriptCallbackStatus::CALL_ERROR, error.message ? error.message : "argument conversion failed" );
+		return false;
 	}
+	return BlueCCallbackInvoke( m_callback, args, argc, result, &error ) == BLUE_OK;
+}
 
-	BlueCCallbackInvoke( m_callback, args, argc );
+// Calls the C callback and drops any value it returns
+template <typename... A>
+BlueScriptCallbackStatus BlueScriptCallback::CallC( const A&... a )
+{
+	BlueCError error = { BLUE_OK, nullptr, 0 };
+	ON_BLOCK_EXIT( [&error] { BlueCErrorClear( &error ); } );
+	if( !InvokeC( nullptr, error, a... ) )
+	{
+		return FailedC( error );
+	}
+	return BlueScriptCallbackStatus::OK;
+}
+
+// Calls the C callback and converts the value it returns into returnValue. A pointer to a Blue
+// object gets a reference of its own, as with Python (RefIRoot, which does not expect null);
+// the returned value itself is released.
+template <typename Ret, typename... A>
+BlueScriptCallbackStatus BlueScriptCallback::CallReturningC( Ret& returnValue, const A&... a )
+{
+	BlueCValueHolder result;
+	BlueCError error = { BLUE_OK, nullptr, 0 };
+	ON_BLOCK_EXIT( [&error] { BlueCErrorClear( &error ); } );
+	if( !InvokeC( &result.Get(), error, a... ) )
+	{
+		return FailedC( error );
+	}
+	if( !BlueCExtract( result.Get(), returnValue, BLUE_CABI_RESULT_INDEX, &error ) )
+	{
+		return FailedC( error );
+	}
+	if constexpr( is_pointer_to_blue<Ret>::type::value )
+	{
+		// NONE extracts as null
+		if( returnValue )
+		{
+			returnValue->Lock();
+		}
+	}
 	return BlueScriptCallbackStatus::OK;
 }
 

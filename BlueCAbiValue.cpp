@@ -210,6 +210,96 @@ void BlueCFreeValues( BlueCValue* values )
 	}
 }
 
+int32_t BlueCSetErrorMessage( BlueCError* err, int32_t code, const char* message, size_t length )
+{
+	if( !err )
+	{
+		return code;
+	}
+	BlueCErrorClear( err );
+	err->code = code;
+	if( !message )
+	{
+		return code;
+	}
+	char* copy = static_cast<char*>( CCP_MALLOC( "BlueCError", length + 1 ) );
+	if( !copy )
+	{
+		return code;
+	}
+	if( length )
+	{
+		memcpy( copy, message, length );
+	}
+	copy[length] = 0;
+	err->message = copy;
+	err->message_len = length;
+	return code;
+}
+
+int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, BlueCError* err )
+{
+	if( !out )
+	{
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null value" );
+	}
+	if( !utf8 && length )
+	{
+		BlueCValueSetNone( *out );
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null string of %zu bytes", length );
+	}
+	return BlueCWrapString( utf8, length, *out, err ) ? int32_t( BLUE_OK ) : int32_t( BLUE_E_OUT_OF_MEMORY );
+}
+
+// out as an ARRAY / MAP over itemCount freshly allocated NONE values (a MAP's are key, value, ...)
+static int32_t BlueCValueSetItems( BlueCValue* out, uint32_t kind, size_t itemCount, BlueCError* err )
+{
+	if( !out )
+	{
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null value" );
+	}
+	BlueCValueSetNone( *out );
+	BlueCValue* items = nullptr;
+	if( itemCount )
+	{
+		items = BlueCAllocateValues( itemCount, err );
+		if( !items )
+		{
+			return BLUE_E_OUT_OF_MEMORY;
+		}
+	}
+	out->kind = kind;
+	if( kind == BLUE_VK_MAP )
+	{
+		out->u.map.kv = items;
+		out->u.map.count = itemCount / 2;
+	}
+	else
+	{
+		out->u.arr.items = items;
+		out->u.arr.count = itemCount;
+	}
+	return BLUE_OK;
+}
+
+int32_t BlueCValueSetArray( BlueCValue* out, size_t count, BlueCError* err )
+{
+	return BlueCValueSetItems( out, BLUE_VK_ARRAY, count, err );
+}
+
+int32_t BlueCValueSetMap( BlueCValue* out, size_t pairCount, BlueCError* err )
+{
+	if( pairCount > std::numeric_limits<size_t>::max() / 2 )
+	{
+		if( out )
+		{
+			BlueCValueSetNone( *out );
+		}
+		return BlueCSetError( err, BLUE_E_OUT_OF_MEMORY, "too many pairs: %zu", pairCount );
+	}
+	return BlueCValueSetItems( out, BLUE_VK_MAP, 2 * pairCount, err );
+}
+
 static void BlueCReleaseValues( BlueCValue* values, size_t count )
 {
 	if( !values )
@@ -323,12 +413,70 @@ const BlueCCallback* BlueCCallbackGet( const BlueCallbackHandle* handle )
 	return handle ? &handle->callback : nullptr;
 }
 
-void BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc )
+int32_t BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc, BlueCValue* out, BlueCError* err )
 {
-	if( handle )
+	if( out )
 	{
-		handle->callback.fn( handle->callback.user_data, args, argc );
+		BlueCValueSetNone( *out );
 	}
+	if( !handle )
+	{
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null callback handle" );
+	}
+
+	// fn always gets an out and an err of its own, so it may write them unconditionally
+	BlueCValue result;
+	BlueCValueSetNone( result );
+	BlueCError error = { BLUE_OK, nullptr, 0 };
+	int32_t status = BLUE_OK;
+	try
+	{
+		status = handle->callback.fn( handle->callback.user_data, args, argc, &result, &error );
+	}
+	catch( ... )
+	{
+		// A C++ host; anything else cannot throw through a C function pointer
+		status = BLUE_E_EXCEPTION;
+		BlueCSetError( &error, status, "callback threw a C++ exception" );
+	}
+
+	if( status == BLUE_OK )
+	{
+		BlueCErrorClear( &error );
+		if( out )
+		{
+			*out = result;
+		}
+		else
+		{
+			BlueCValueRelease( &result );
+		}
+		return BLUE_OK;
+	}
+
+	BlueCValueRelease( &result );
+	if( status > 0 )
+	{
+		status = BLUE_E_FAILED;
+	}
+	if( !err )
+	{
+		BlueCErrorClear( &error );
+		return status;
+	}
+	BlueCErrorClear( err );
+	if( error.message )
+	{
+		// Keep the callback's message as it is; the returned status is the code
+		*err = error;
+		err->code = status;
+	}
+	else
+	{
+		BlueCErrorClear( &error );
+		BlueCSetError( err, status, "callback failed with status %d", int( status ) );
+	}
+	return status;
 }
 
 void BlueCWrapCallback( BlueCallbackHandle* handle, BlueCValue& out )
