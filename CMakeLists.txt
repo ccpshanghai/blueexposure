@@ -76,6 +76,7 @@ set(PUBLIC_HEADER_FILES
     include/BlueExposureHelpers.h
     include/BlueExposureHelpersPython.h
     include/BlueExposureMacros.h
+    include/BlueExposureMacrosCAbi.h
     include/BlueExposureMacrosDeprecated.h
     include/BlueExposureMacrosPython.h
     include/BlueExposureTypeSignature.h

@@ -1,74 +1,62 @@
 // Copyright (c) 2026 CCP Games
-
-// Call this macro in a public section of your class declaration, then implement one static method in a cpp file:
 //
-// const Be::ClassInfo* <ClassName>::ExposeToBlue()
-#define EXPOSE_TO_BLUE() \
-	static const Be::ClassInfo* ClassType_() { return ExposeToBlue(); } \
-	static const Be::Clsid* Clsid() { return ClassType_()->mClassId; } \
-	static const Be::IID* IID() { return ClassType_()->mIID; } \
-	\
-	IRoot* GetRawRoot() const { return reinterpret_cast<IRoot*>((uintptr_t)this + ClassType_()->mInterfaceTable->mOffset); } \
-	\
-	const Be::ClassInfo* ClassType() const override { return ClassType_(); } \
-	\
+// Python backend of the exposure macros: the BLUE_PY_* fragments that the common macros in
+// BlueExposureMacros.h expand, plus the macros that only exist for Python (methods taking raw
+// PyObject* arguments, module init, exceptions). Included from BlueExposureMacros.h; with
+// BLUE_WITH_PYTHON off every fragment expands to nothing.
+
+#pragma once
+
+#if BLUE_WITH_PYTHON
+
+//--------------------------------------------------------------------
+// Fragments used by the common exposure macros
+//--------------------------------------------------------------------
+
+// EXPOSE_TO_BLUE: the tp_new of the class's Python type
+#define BLUE_PY_EXPOSE_TO_BLUE_EXTRA \
 	static PyObject* PyNew( PyTypeObject* type, PyObject* args, PyObject* kwds ) \
 	{\
 		return BlueCreateInstanceFromPython( *Clsid(), args, kwds );\
-	}\
-	\
-	static const Be::ClassInfo* ExposeToBlue()
+	}
 
-
-#define EXPOSURE_BEGIN_IMP(_classname, _doc, _classid)\
-	static Be::ClassInfo* s_classInfo = nullptr; \
-	if( s_classInfo ) { return s_classInfo; } \
-	typedef _classname _Class;\
-	\
-	const char* const _tmpdoc = _doc;\
-	const Be::Clsid& _tmpclsid = _classid;\
-	static Be::IID s_iid(#_classname); \
-	static Be::IID s_iroot("IRoot"); \
-	\
+// EXPOSURE_BEGIN_IMP: the Python type object and its method and member tables
+#define BLUE_PY_BEGIN_EXTRA \
 	static PyTypeObject s_pyType = { PyVarObject_HEAD_INIT(&PyType_Type, 0) }; \
 	static std::vector<PyMethodDef> s_methods;\
-	static std::vector<Be::VarEntry> s_attributes; \
-	static std::vector<Be::InterfaceEntry> s_interfaces; \
-	static std::map<std::string, Be::BlueExposureFunctionSignature> s_signatures; \
-	static std::vector<PyMemberDef> s_memberDefs; \
-	Be::InterfaceEntry rootEntry = {&s_iroot, BLUE_INTERFACEOFFSET(_Class)}; \
-	s_interfaces.push_back( rootEntry ); \
-	Be::InterfaceEntry myEntry = {&s_iid, BLUE_INTERFACEOFFSET(_Class)}; \
-	s_interfaces.push_back( myEntry );
+	static std::vector<PyMemberDef> s_memberDefs;
 
-#define EXPOSURE_END_IMPL(_parentclasstype, _parentoffs)\
-	Be::VarEntry attributesEndItem = { 0 }; \
-	s_attributes.push_back( attributesEndItem ); \
-	Be::InterfaceEntry interfacesEnd = { 0 }; \
-	s_interfaces.push_back( interfacesEnd ); \
-	\
+// EXPOSURE_END_IMPL: set up the Python type and hook it into _classinfo
+#define BLUE_PY_END_EXTRA \
 	BlueInitializePyType( &s_pyType, &_tmpclsid, _tmpdoc, &s_interfaces[0], PyNew ); \
-	\
-	static Be::ClassInfo _classinfo; \
-	_classinfo.mClassId = &_tmpclsid;  \
-	_classinfo.mIID = &s_iid; \
-	_classinfo.mDescription = _tmpdoc; \
-	_classinfo.mInterfaceTable = &s_interfaces[0]; \
-	_classinfo.mMemberTable = &s_attributes[0]; \
-	_classinfo.mParentClassInfo = _parentclasstype; \
-	_classinfo.mOffsetToParent = _parentoffs; \
-	_classinfo.mRtti = nullptr; \
 	_classinfo.mTypeObject = &s_pyType; \
-	_classinfo.mLiveCount = 0; \
-	_classinfo.mLockCount = 0; \
-	_classinfo.mFunctionSignatures = &s_signatures; \
 	BlueRegisterPyMethodDefs( &_classinfo, &s_methods); \
 	_classinfo.mPyMethodTable = _classinfo.mTypeObject->tp_methods; \
-	BlueRegisterPyMemberDefs( &_classinfo, &s_memberDefs ); \
-    \
-	s_classInfo = &_classinfo; \
-	return &_classinfo;
+	BlueRegisterPyMemberDefs( &_classinfo, &s_memberDefs );
 
+// MAP_METHOD_AND_WRAP / MAP_METHOD_AND_WRAP_OPTIONAL_ARGS
+#define BLUE_PY_ADD_METHOD_AND_WRAP( name, functionName, docString ) \
+{\
+	PyMethodDef d = { name, &BlueMethodHelper<decltype(&_Class::functionName), &_Class::functionName>, METH_VARARGS, docString };\
+	s_methods.push_back( d );\
+}
+
+#define BLUE_PY_ADD_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
+{\
+	PyMethodDef d = { name, &BlueMethodHelperWithOptionalArgs<decltype(&_Class::functionName), &_Class::functionName, numOptional>, METH_VARARGS, docString };\
+	s_methods.push_back( d );\
+}
+
+// MAP_PROPERTY*: the Python getter and setter of a VarEntry
+#define BLUE_PY_PROPERTY_GETTER( getterFunction ) \
+	BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>
+
+#define BLUE_PY_PROPERTY_SETTER( setterFunction ) \
+	BluePropertySetter<_Class, decltype(&_Class::setterFunction), &_Class::setterFunction>
+
+// MAP_FUNCTION_AND_WRAP: a declaration, ending in ';'
+#define BLUE_PY_MAP_FUNCTION_AND_WRAP( _expname, _func, _docstring ) \
+	static FunctionRegistrar s_##_func##FunctionRegistrar(_expname, &BlueFunctionHelper<decltype(&_func), &_func>, _docstring);
 
 // Use this function to cast a Blue-wrapped Python object to a concrete C++ type (Blue class).
 // This function is typically used inside a Py C++ wrapper function for a C++ class method.
@@ -114,12 +102,8 @@ template< class POINTER_TYPE > POINTER_TYPE BluePythonStaticCast( PyObject* self
 BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObject* args, PyObject* kwds );
 
 //--------------------------------------------------------------------
-// Interface mapping macros
+// Python-only mapping macros
 //--------------------------------------------------------------------
-
-//////////////////////////////////////////////////////////////////////////
-// Single line exposure macros
-//////////////////////////////////////////////////////////////////////////
 
 // MAP_METHOD maps a free function with the signature
 // PyObject* pyFunc( PyObject* self, PyObject* args )
@@ -128,20 +112,6 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 {\
 	PyMethodDef d = { nameString, &BlueFunctionAsMethodHelper<pyFunc>, METH_VARARGS, docString };\
 	s_methods.push_back( d );\
-}
-
-#define MAP_METHOD_AND_WRAP( name, functionName, docString ) \
-{\
-	PyMethodDef d = { name, &BlueMethodHelper<decltype(&_Class::functionName), &_Class::functionName>, METH_VARARGS, docString };\
-	s_methods.push_back( d );\
-	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName ); \
-}
-
-#define MAP_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
-{\
-	PyMethodDef d = { name, &BlueMethodHelperWithOptionalArgs<decltype(&_Class::functionName), &_Class::functionName, numOptional>, METH_VARARGS, docString };\
-	s_methods.push_back( d );\
-	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName, numOptional ); \
 }
 
 // MAP_METHOD_AS_METHOD maps a member function with the signature
@@ -164,69 +134,6 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 		METH_VARARGS | METH_KEYWORDS, \
 		docString }; \
 	s_methods.push_back( d ); \
-}
-
-////////////////////////////////////////////////////////////////////////////////////
-// Use for Vector2, Vector3, Color, D3DXVECTOR4 etc. Give Blue*IID types to help
-// Jessica select the right tools for the vector type. MAP_ATTRIBUTE is capable of
-// picking the correct IID for the ones that have a dedicated type, Color, Quaternion
-// etc, but for instance if you want a direction tool for a Vector3 you need this macro.
-#define MAP_ATTRIBUTE_WITH_IID( attributeName, member, docString, _flags, _IID )\
-{\
-	_Class* temp = NULL;\
-	static Be::VarEntry d = MAP_MEMBER( attributeName, VarTypeForVariable<decltype(temp->member)>::type, member, _IID, docString, _flags, NULL );\
-	s_attributes.push_back( d );\
-}
-
-// Map a property with the given name with a getterFunction and a setterFunction
-#define MAP_PROPERTY(nameString, getterFunction, setterFunction, docString)\
-{\
-	static Be::VarEntry d = { \
-		nameString, \
-		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
-		0, \
-		0, \
-		GetBlueReturnTypeIID(&_Class::getterFunction), \
-		(docString), \
-		Be::READWRITE, \
-		nullptr, \
-		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
-		BluePropertySetter<_Class, decltype(&_Class::setterFunction), &_Class::setterFunction> }; \
- 	s_attributes.push_back( d );\
-}
-
-// Map a read-only property with the given name with a getterFunction
-#define MAP_PROPERTY_READONLY(nameString, getterFunction, docString)\
-{\
-	static Be::VarEntry d = { \
-		nameString, \
-		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
-		0, \
-		0, \
-		GetBlueReturnTypeIID(&_Class::getterFunction), \
-		(docString), \
-		Be::READ, \
-		nullptr, \
-		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
-		nullptr }; \
- 	s_attributes.push_back( d );\
-}
-
-// Map a persisted property with the given name with a getterFunction and a setterFunction
-#define MAP_PROPERTY_PERSISTED(nameString, getterFunction, setterFunction, docString)\
-{\
-	static Be::VarEntry d = { \
-		nameString, \
-		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
-		0, \
-		0, \
-		GetBlueReturnTypeIID(&_Class::getterFunction), \
-		(docString), \
-		Be::READWRITE | Be::PERSIST, \
-		nullptr, \
-		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
-		BluePropertySetter<_Class, decltype(&_Class::setterFunction), &_Class::setterFunction> }; \
- 	s_attributes.push_back( d );\
 }
 
 #ifdef _WIN32
@@ -281,3 +188,21 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 		return s_exception; \
 	} \
 	BLUE_REGISTER_EXCEPTION( name, CCP_CONCATENATE( BlueGetException, name ) )
+
+#else
+
+#define BLUE_PY_EXPOSE_TO_BLUE_EXTRA
+#define BLUE_PY_BEGIN_EXTRA
+#define BLUE_PY_END_EXTRA
+#define BLUE_PY_ADD_METHOD_AND_WRAP( name, functionName, docString )
+#define BLUE_PY_ADD_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString )
+#define BLUE_PY_PROPERTY_GETTER( getterFunction ) nullptr
+#define BLUE_PY_PROPERTY_SETTER( setterFunction ) nullptr
+#define BLUE_PY_MAP_FUNCTION_AND_WRAP( _expname, _func, _docstring )
+
+// Methods taking raw Python arguments are not exposed without Python
+#define MAP_METHOD( nameString, pyFunc, docString )
+#define MAP_METHOD_AS_METHOD( nameString, pyFunc, docString )
+#define MAP_METHOD_WITH_KEYWORD_ARGUMENTS( nameString, pyFunc, docString )
+
+#endif // BLUE_WITH_PYTHON

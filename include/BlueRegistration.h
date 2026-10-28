@@ -223,11 +223,32 @@ public:
 	}
 };
 
+// Records the signature of a module function, independently of the backends that expose it
+class FunctionSignatureRegistrar
+{
+public:
+	FunctionSignatureRegistrar( const char* expname, const Be::BlueExposureFunctionSignature& signature )
+	{
+		BlueRegistration::GetFuncSignatures()[expname] = signature;
+	}
+};
+
+// MAP_FUNCTION maps a free function with the signature
+// PyObject* func( PyObject* self, PyObject* args )
+// as a module function. Python only; without Python the function is not exposed.
+#if BLUE_WITH_PYTHON
 #define MAP_FUNCTION( _expname, _func, _docstring ) \
 	static FunctionRegistrar s_##_func##FunctionRegistrar(_expname, _func, _docstring)
+#else
+#define MAP_FUNCTION( _expname, _func, _docstring ) \
+	static_assert( true, "MAP_FUNCTION is Python only" )
+#endif
 
+// Map a module function with automatic argument and return value conversion, in every backend
 #define MAP_FUNCTION_AND_WRAP( _expname, _func, _docstring ) \
-	static FunctionRegistrar s_##_func##FunctionRegistrar(_expname, &BlueFunctionHelper<decltype(&_func), &_func>, _docstring, BlueGetFunctionSignature( &_func ) )
+	BLUE_PY_MAP_FUNCTION_AND_WRAP( _expname, _func, _docstring ) \
+	BLUE_CABI_MAP_FUNCTION_AND_WRAP( _expname, _func, _docstring ) \
+	static FunctionSignatureRegistrar s_##_func##FunctionSignatureRegistrar( _expname, BlueGetFunctionSignature( &_func ) )
 
 
 /////////////////

@@ -125,6 +125,75 @@
 	sizeof(reinterpret_cast<_Class*>(0)->_member)
 
 
+//--------------------------------------------------------------------
+// Class exposure
+//
+// The macros below build the backend-neutral Be::ClassInfo. Each script backend adds its own
+// registration through fragment macros: BLUE_PY_* (BlueExposureMacrosPython.h) and BLUE_CABI_*
+// (BlueExposureMacrosCAbi.h). A fragment expands to nothing when its backend is off.
+//--------------------------------------------------------------------
+
+// Call this macro in a public section of your class declaration, then implement one static method in a cpp file:
+//
+// const Be::ClassInfo* <ClassName>::ExposeToBlue()
+#define EXPOSE_TO_BLUE() \
+	static const Be::ClassInfo* ClassType_() { return ExposeToBlue(); } \
+	static const Be::Clsid* Clsid() { return ClassType_()->mClassId; } \
+	static const Be::IID* IID() { return ClassType_()->mIID; } \
+	\
+	IRoot* GetRawRoot() const { return reinterpret_cast<IRoot*>((uintptr_t)this + ClassType_()->mInterfaceTable->mOffset); } \
+	\
+	const Be::ClassInfo* ClassType() const override { return ClassType_(); } \
+	\
+	BLUE_PY_EXPOSE_TO_BLUE_EXTRA \
+	\
+	static const Be::ClassInfo* ExposeToBlue()
+
+
+#define EXPOSURE_BEGIN_IMP(_classname, _doc, _classid)\
+	static Be::ClassInfo* s_classInfo = nullptr; \
+	if( s_classInfo ) { return s_classInfo; } \
+	typedef _classname _Class;\
+	\
+	const char* const _tmpdoc = _doc;\
+	const Be::Clsid& _tmpclsid = _classid;\
+	static Be::IID s_iid(#_classname); \
+	static Be::IID s_iroot("IRoot"); \
+	\
+	BLUE_PY_BEGIN_EXTRA \
+	BLUE_CABI_BEGIN_EXTRA \
+	static std::vector<Be::VarEntry> s_attributes; \
+	static std::vector<Be::InterfaceEntry> s_interfaces; \
+	static std::map<std::string, Be::BlueExposureFunctionSignature> s_signatures; \
+	Be::InterfaceEntry rootEntry = {&s_iroot, BLUE_INTERFACEOFFSET(_Class)}; \
+	s_interfaces.push_back( rootEntry ); \
+	Be::InterfaceEntry myEntry = {&s_iid, BLUE_INTERFACEOFFSET(_Class)}; \
+	s_interfaces.push_back( myEntry );
+
+#define EXPOSURE_END_IMPL(_parentclasstype, _parentoffs)\
+	Be::VarEntry attributesEndItem = { 0 }; \
+	s_attributes.push_back( attributesEndItem ); \
+	Be::InterfaceEntry interfacesEnd = { 0 }; \
+	s_interfaces.push_back( interfacesEnd ); \
+	\
+	static Be::ClassInfo _classinfo; \
+	_classinfo.mClassId = &_tmpclsid;  \
+	_classinfo.mIID = &s_iid; \
+	_classinfo.mDescription = _tmpdoc; \
+	_classinfo.mInterfaceTable = &s_interfaces[0]; \
+	_classinfo.mMemberTable = &s_attributes[0]; \
+	_classinfo.mParentClassInfo = _parentclasstype; \
+	_classinfo.mOffsetToParent = _parentoffs; \
+	_classinfo.mRtti = nullptr; \
+	_classinfo.mLiveCount = 0; \
+	_classinfo.mLockCount = 0; \
+	_classinfo.mFunctionSignatures = &s_signatures; \
+	BLUE_PY_END_EXTRA \
+	BLUE_CABI_END_EXTRA \
+	\
+	s_classInfo = &_classinfo; \
+	return &_classinfo;
+
 // Begin the ExposeToBlue method implementation with this macro
 #define EXPOSURE_BEGIN( classname, docstring )\
 	EXPOSURE_BEGIN_IMP( classname, docstring, Get##classname##Clsid() )
@@ -168,6 +237,18 @@
 	s_attributes.push_back( d );\
 }
 
+////////////////////////////////////////////////////////////////////////////////////
+// Use for Vector2, Vector3, Color, D3DXVECTOR4 etc. Give Blue*IID types to help
+// Jessica select the right tools for the vector type. MAP_ATTRIBUTE is capable of
+// picking the correct IID for the ones that have a dedicated type, Color, Quaternion
+// etc, but for instance if you want a direction tool for a Vector3 you need this macro.
+#define MAP_ATTRIBUTE_WITH_IID( attributeName, member, docString, _flags, _IID )\
+{\
+	_Class* temp = NULL;\
+	static Be::VarEntry d = MAP_MEMBER( attributeName, VarTypeForVariable<decltype(temp->member)>::type, member, _IID, docString, _flags, NULL );\
+	s_attributes.push_back( d );\
+}
+
 #define MAP_INTERFACE(_iface) \
 {\
 	Be::InterfaceEntry entry = {&Get##_iface##IID(), BLUE_INTERFACEOFFSET(_iface)}; \
@@ -187,8 +268,80 @@ template <typename fnType> static const Be::IID* GetBlueReturnTypeIID( const fnT
 }
 
 
-#if BLUE_WITH_PYTHON
+// Map a method with automatic argument and return value conversion. The function signature is
+// recorded for every backend.
+#define MAP_METHOD_AND_WRAP( name, functionName, docString ) \
+{\
+	BLUE_PY_ADD_METHOD_AND_WRAP( name, functionName, docString ) \
+	BLUE_CABI_ADD_METHOD_AND_WRAP( name, functionName, docString ) \
+	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName ); \
+}
+
+// As MAP_METHOD_AND_WRAP, where the last numOptional arguments may be omitted
+#define MAP_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
+{\
+	BLUE_PY_ADD_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
+	BLUE_CABI_ADD_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
+	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName, numOptional ); \
+}
+
+// Map a property with the given name with a getterFunction and a setterFunction
+#define MAP_PROPERTY(nameString, getterFunction, setterFunction, docString)\
+{\
+	static Be::VarEntry d = { \
+		nameString, \
+		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
+		0, \
+		0, \
+		GetBlueReturnTypeIID(&_Class::getterFunction), \
+		(docString), \
+		Be::READWRITE, \
+		nullptr, \
+		BLUE_PY_PROPERTY_GETTER( getterFunction ), \
+		BLUE_PY_PROPERTY_SETTER( setterFunction ) \
+		BLUE_CABI_PROPERTY_FIELDS( getterFunction, setterFunction ) }; \
+ 	s_attributes.push_back( d );\
+}
+
+// Map a read-only property with the given name with a getterFunction
+#define MAP_PROPERTY_READONLY(nameString, getterFunction, docString)\
+{\
+	static Be::VarEntry d = { \
+		nameString, \
+		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
+		0, \
+		0, \
+		GetBlueReturnTypeIID(&_Class::getterFunction), \
+		(docString), \
+		Be::READ, \
+		nullptr, \
+		BLUE_PY_PROPERTY_GETTER( getterFunction ), \
+		nullptr \
+		BLUE_CABI_PROPERTY_FIELDS_READONLY( getterFunction ) }; \
+ 	s_attributes.push_back( d );\
+}
+
+// Map a persisted property with the given name with a getterFunction and a setterFunction
+#define MAP_PROPERTY_PERSISTED(nameString, getterFunction, setterFunction, docString)\
+{\
+	static Be::VarEntry d = { \
+		nameString, \
+		BlueGetPropertyType<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>(), \
+		0, \
+		0, \
+		GetBlueReturnTypeIID(&_Class::getterFunction), \
+		(docString), \
+		Be::READWRITE | Be::PERSIST, \
+		nullptr, \
+		BLUE_PY_PROPERTY_GETTER( getterFunction ), \
+		BLUE_PY_PROPERTY_SETTER( setterFunction ) \
+		BLUE_CABI_PROPERTY_FIELDS( getterFunction, setterFunction ) }; \
+ 	s_attributes.push_back( d );\
+}
+
+
+// Backend fragments and backend-only macros
 #include "BlueExposureMacrosPython.h"
-#endif
+#include "BlueExposureMacrosCAbi.h"
 
 #endif
