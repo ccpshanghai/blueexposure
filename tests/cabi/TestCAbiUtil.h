@@ -142,6 +142,17 @@ BlueCValue Obj( T* obj )
 	return Obj( reinterpret_cast<IRoot*>( obj ) );
 }
 
+inline BlueCValue Callback( BlueCallbackHandle* handle )
+{
+	BlueCValue v = None();
+	if( handle )
+	{
+		v.kind = BLUE_VK_CALLBACK;
+		v.u.callback = handle;
+	}
+	return v;
+}
+
 inline std::string AsString( const BlueCValue& v )
 {
 	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_STRING ) );

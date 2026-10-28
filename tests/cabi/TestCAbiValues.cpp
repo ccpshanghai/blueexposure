@@ -22,7 +22,7 @@ using namespace CAbiTest;
 TEST( CAbiLayout, CMatchesCpp )
 {
 	size_t c[16] = {};
-	ASSERT_EQ( BlueCAbiTestCLayout( c, 16 ), size_t( 13 ) );
+	ASSERT_EQ( BlueCAbiTestCLayout( c, 16 ), size_t( 14 ) );
 
 	const size_t cpp[] = {
 		sizeof( BlueCValue ),
@@ -30,6 +30,7 @@ TEST( CAbiLayout, CMatchesCpp )
 		offsetof( BlueCValue, aux ),
 		offsetof( BlueCValue, u ),
 		offsetof( BlueCValue, u.str.len ),
+		offsetof( BlueCValue, u.callback ),
 		offsetof( BlueCValue, u.vec.v ),
 		offsetof( BlueCValue, u.arr.count ),
 		offsetof( BlueCValue, u.map.count ),
@@ -39,7 +40,7 @@ TEST( CAbiLayout, CMatchesCpp )
 		sizeof( BlueCMethodDef ),
 		sizeof( BlueCCallback ),
 	};
-	for( size_t i = 0; i < 13; ++i )
+	for( size_t i = 0; i < 14; ++i )
 	{
 		EXPECT_EQ( c[i], cpp[i] ) << "layout entry " << i;
 	}
@@ -649,5 +650,6 @@ TEST( CAbiConvert, ReleaseNested )
 TEST( CAbiConvert, KindNames )
 {
 	EXPECT_STREQ( BlueCKindName( BLUE_VK_MAP ), "map" );
+	EXPECT_STREQ( BlueCKindName( BLUE_VK_CALLBACK ), "callback" );
 	EXPECT_STREQ( BlueCKindName( 99 ), "invalid kind" );
 }

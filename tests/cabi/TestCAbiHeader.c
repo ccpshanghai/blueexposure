@@ -14,6 +14,7 @@ enum
 	LAYOUT_VALUE_AUX,
 	LAYOUT_VALUE_U,
 	LAYOUT_VALUE_STR_LEN,
+	LAYOUT_VALUE_CALLBACK,
 	LAYOUT_VALUE_VEC,
 	LAYOUT_VALUE_ARR_COUNT,
 	LAYOUT_VALUE_MAP_COUNT,
@@ -35,6 +36,7 @@ size_t BlueCAbiTestCLayout( size_t* out, size_t capacity )
 	layout[LAYOUT_VALUE_AUX] = offsetof( BlueCValue, aux );
 	layout[LAYOUT_VALUE_U] = offsetof( BlueCValue, u );
 	layout[LAYOUT_VALUE_STR_LEN] = offsetof( BlueCValue, u.str.len );
+	layout[LAYOUT_VALUE_CALLBACK] = offsetof( BlueCValue, u.callback );
 	layout[LAYOUT_VALUE_VEC] = offsetof( BlueCValue, u.vec.v );
 	layout[LAYOUT_VALUE_ARR_COUNT] = offsetof( BlueCValue, u.arr.count );
 	layout[LAYOUT_VALUE_MAP_COUNT] = offsetof( BlueCValue, u.map.count );
