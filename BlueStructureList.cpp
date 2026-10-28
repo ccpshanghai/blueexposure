@@ -8,6 +8,7 @@
 #include "include/BlueStructureList.h"
 #include "include/BlueTypeTraits.h"
 #include "TypeInfo.h"
+#include <math.h>
 
 namespace
 {

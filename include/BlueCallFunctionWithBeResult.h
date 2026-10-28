@@ -11,6 +11,9 @@
 
 #include "BlueWrapReturnValue.h"
 
+// Python only, like BlueCallFunction.h
+#if BLUE_WITH_PYTHON
+
 template< typename resultType, typename argType >
 BlueScriptValue BlueGetReturnValueIfSuccess( BlueScriptArguments args, const resultType& result, const argType& arg )
 {
@@ -987,5 +990,7 @@ bool BlueCallFunctionWithBeResultLastArgRef( fnType method, BlueScriptArguments 
 	return true;
 }
 
+
+#endif // BLUE_WITH_PYTHON
 
 #endif // BlueCallFunctionWithBeResult_h

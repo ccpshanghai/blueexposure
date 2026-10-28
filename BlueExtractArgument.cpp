@@ -667,9 +667,14 @@ PyObject* ConvertMatrixToSequence( const Matrix* m )
 	return ret;
 }
 
-#elif BLUE_NO_EXPOSURE
+#else
 
 bool BlueExtractString( BlueScriptValue, std::string& )
+{
+	return false;
+}
+
+bool BlueExtractWString( BlueScriptValue, std::wstring& )
 {
 	return false;
 }

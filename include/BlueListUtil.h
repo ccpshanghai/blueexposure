@@ -181,7 +181,9 @@ class BlueList_Impl :
     //no assignment or copying
     BlueList_Impl(const Class &other);
     Class &operator= (const Class &other);
+#if BLUE_WITH_PYTHON
     PyObject* mDebugItems;
+#endif
 public:
 
     IListNotify* mNotify;
@@ -189,16 +191,22 @@ public:
     BlueList_Impl() :
             TrackableStdVector<T*>( "BlueList" ),
             mNotify(NULL),
-            mOffset( 0 ),
-            mDebugItems(Py_None)
+            mOffset( 0 )
+#if BLUE_WITH_PYTHON
+            , mDebugItems(Py_None)
+#endif
     {
+#if BLUE_WITH_PYTHON
         Py_INCREF(Py_None);
+#endif
     }
 
     ~BlueList_Impl()
     {
         //At deletion, no one needs to know we're going away
+#if BLUE_WITH_PYTHON
         Py_XDECREF(mDebugItems);
+#endif
         mNotify = 0;
         Remove(-1);
     }
@@ -240,6 +248,7 @@ public:
 
         MAP_INTERFACE( IList )
         MAP_INTERFACE( ICopierCustomAssignment )
+#if BLUE_WITH_PYTHON
         MAP_METHOD_AS_METHOD( "__repr__", PyRepr, "Convert to string for printing" )
         MAP_METHOD_AS_METHOD( "DebugExpand", PyDebugExpand, "Create Python Wrappers for all items currently in the list and expose it in the 'debugItems' attribute." )
         MAP_METHOD_AS_METHOD( "DebugCollapse", PyDebugCollapse, "Clean up debugItems after calling DebugExpand." )
@@ -250,6 +259,7 @@ public:
             "When expanding the entire list by calling DebugExpand, this is where the list will show up.",
             Be::READ
         )
+#endif
 
         EXPOSURE_END()
     }
@@ -346,6 +356,7 @@ public:
         }
     }
 
+#if BLUE_WITH_PYTHON
     PyObject* PyRepr( PyObject* args )
     {
         const uint8_t MAX_STRING_SIZE = 100; // The maximum size for the returned string.
@@ -427,6 +438,7 @@ public:
         Py_INCREF(Py_None);
         Py_RETURN_NONE;
     }
+#endif
 };
 
 template <

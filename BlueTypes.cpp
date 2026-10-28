@@ -10,6 +10,7 @@
 
 #include "include/BlueTypes.h"
 #include "include/BlueStringTable.h"
+#include <cstring>
 #include <string>
 
 namespace

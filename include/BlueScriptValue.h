@@ -25,8 +25,10 @@ typedef PyObject* (*BluePropertySetterFunction)(PyObject*, PyObject*);
 typedef PyMethodDef BlueMethodDefinition;
 typedef PyCFunction BlueScriptCFunction;
 
-#elif BLUE_NO_EXPOSURE
+#else
 
+// Python off: stand-ins, so that code naming these types still compiles. The C-ABI backend
+// has its own types (BlueCAbi.h).
 typedef void* BlueScriptValue;
 typedef void* BlueScriptArguments;
 #define BLUE_SCRIPT_ERROR nullptr

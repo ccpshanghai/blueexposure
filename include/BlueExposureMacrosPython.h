@@ -3,7 +3,7 @@
 // Python backend of the exposure macros: the BLUE_PY_* fragments that the common macros in
 // BlueExposureMacros.h expand, plus the macros that only exist for Python (methods taking raw
 // PyObject* arguments, module init, exceptions). Included from BlueExposureMacros.h; with
-// BLUE_WITH_PYTHON off every fragment expands to nothing.
+// BLUE_WITH_PYTHON off every fragment expands to nothing, and exceptions are only names.
 
 #pragma once
 
@@ -204,5 +204,18 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 #define MAP_METHOD( nameString, pyFunc, docString )
 #define MAP_METHOD_AS_METHOD( nameString, pyFunc, docString )
 #define MAP_METHOD_WITH_KEYWORD_ARGUMENTS( nameString, pyFunc, docString )
+
+// Without Python an exception is just its name (ScriptExceptionGetter, BeGetException)
+#define BLUE_DECLARE_EXCEPTION_EX( name, ... ) __VA_ARGS__ const char* CCP_CONCATENATE( BlueGetException, name )();
+#define BLUE_DECLARE_EXCEPTION( name ) BLUE_DECLARE_EXCEPTION_EX( name )
+
+#define BLUE_GET_EXCEPTION( name ) ( CCP_CONCATENATE( BlueGetException, name )() )
+
+#define BLUE_DEFINE_EXCEPTION( name, parent ) \
+	const char* CCP_CONCATENATE( BlueGetException, name )() \
+	{ \
+		return #name; \
+	} \
+	BLUE_REGISTER_EXCEPTION( name, CCP_CONCATENATE( BlueGetException, name ) )
 
 #endif // BLUE_WITH_PYTHON

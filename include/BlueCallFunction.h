@@ -18,6 +18,9 @@
 #include "BlueMemberFunctionAsCallable.h"
 #include "BlueFunctionTraits.h"
 
+// Calling a C++ function with arguments from a Python tuple. Python only; the C-ABI backend has
+// its own call machinery (BlueCAbiCall.h).
+#if BLUE_WITH_PYTHON
 
 #define EXTRACT_ARGUMENT_N( args, ix ) \
 	typedef typename function_traits<fnType>::arg ## ix ## _type A ## ix; \
@@ -646,5 +649,7 @@ BlueScriptValue BlueCallFunctionAndWrapReturn( fnType method, BlueScriptArgument
 
 	return BlueCallFunctionReturningValue( method, args, typename is_be_result<return_type>::type() );
 }
+
+#endif // BLUE_WITH_PYTHON
 
 #endif // BlueCallFunction_h

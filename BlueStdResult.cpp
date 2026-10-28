@@ -65,4 +65,68 @@ BLUEIMPORT PyObject* CCP_CONCATENATE( BlueGetException, BlueStdValueError )()
 	return PyExc_ValueError;
 }
 
+#else
+
+// Without Python an exception is its name; these are the names of the Python exceptions above
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdIndexError )()
+{
+	return "IndexError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdKeyError )()
+{
+	return "KeyError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdAssertionError )()
+{
+	return "AssertionError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdAttributeError )()
+{
+	return "AttributeError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdEofError )()
+{
+	return "EOFError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdIOError )()
+{
+	return "IOError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdMemoryError )()
+{
+	return "MemoryError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdOSError )()
+{
+	return "OSError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdOverflowError )()
+{
+	return "OverflowError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdRuntimeError )()
+{
+	return "RuntimeError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdTypeError )()
+{
+	return "TypeError";
+}
+
+BLUEIMPORT const char* CCP_CONCATENATE( BlueGetException, BlueStdValueError )()
+{
+	return "ValueError";
+}
+
 #endif

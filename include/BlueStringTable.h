@@ -5,6 +5,7 @@
 #define BlueStringTable_H
 
 #include <CcpCore.h>
+#include <cstring>
 
 // --------------------------------------------------------------------------------------
 // Description:

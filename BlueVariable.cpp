@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CCP Games
 
 #include "BlueVariable.h"
+#include <math.h>
 
 static bool CompareStrings(const char* a, const char* b)
 {

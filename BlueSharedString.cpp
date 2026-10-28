@@ -112,7 +112,7 @@ BlueScriptValue BlueWrapReturnValueImpl(
 {
 #if BLUE_WITH_PYTHON
 	return PyUnicode_FromString( val.c_str() );
-#elif BLUE_NO_EXPOSURE
+#else
 	return nullptr;
 #endif
 }
@@ -140,8 +140,7 @@ bool BlueExtractArgumentImpl(
 	bool success = BlueExtractString( argument, str );
 	if( !success )
 	{
-#if BLUE_NO_EXPOSURE
-#else
+#if BLUE_WITH_PYTHON
 		PyErr_Format( PyExc_TypeError, argumentTypeMismatchString, argID, "string" );
 #endif
 		return false;
@@ -157,7 +156,7 @@ BlueScriptValue BlueWrapReturnValueImpl(
 {
 #if BLUE_WITH_PYTHON
 	return PyUnicode_FromWideChar( (const wchar_t*)val.c_str(), -1 );
-#elif BLUE_NO_EXPOSURE
+#else
 	return nullptr;
 #endif
 }
@@ -172,8 +171,7 @@ bool BlueExtractArgumentImpl(
 	bool success = BlueExtractWString( argument, str );
 	if( !success )
 	{
-#if BLUE_NO_EXPOSURE
-#else
+#if BLUE_WITH_PYTHON
 		PyErr_Format( PyExc_TypeError, argumentTypeMismatchString, argID, "unicode" );
 #endif
 		return false;

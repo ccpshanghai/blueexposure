@@ -10,6 +10,7 @@
 #define BlueTypes_h
 
 #include <CcpCore.h>
+#include <cstring>
 #include "BlueScriptValue.h"
 #if BLUE_WITH_CABI
 #include "BlueCAbi.h"
@@ -60,7 +61,8 @@ template<typename T> PyObject* BeGetException( const Be::Result<T>& result )
 	CCP_ASSERT_M( false, "Missing specialization for BeGetException" );
 	return nullptr;
 }
-#elif BLUE_NO_EXPOSURE
+#else
+// Python off: an exception is its name (see BLUE_DEFINE_EXCEPTION)
 #define BLUE_DECLARE_GET_EXCEPTION( type ) template<> const char* BeGetException( const type& result );
 #define BLUE_BEGIN_GET_EXCEPTION( type ) template<> const char* BeGetException( const type& result ) {
 #define BLUE_BEGIN_GET_EXCEPTION_INLINE( type ) template<> inline const char* BeGetException( const type& result ) {

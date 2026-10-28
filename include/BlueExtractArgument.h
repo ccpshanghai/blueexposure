@@ -11,6 +11,7 @@
 
 #include "BlueVectorTypes.h"
 #include "BlueTypeTraits.h"
+#include <cstring>
 #include <type_traits>
 #include <typeinfo>
 #include <string>

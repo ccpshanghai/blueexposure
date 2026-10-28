@@ -61,7 +61,7 @@ typedef std::map<std::string, std::pair<uint32_t,GetEnumValuesFunctionTypePtr> >
 
 #if BLUE_WITH_PYTHON
 typedef PyObject* ( *ScriptExceptionGetter )();
-#elif BLUE_NO_EXPOSURE
+#else
 typedef const char* ( *ScriptExceptionGetter )();
 #endif
 
