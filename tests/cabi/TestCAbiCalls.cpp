@@ -398,6 +398,10 @@ TEST( CAbiSuperclass, UnknownMethod )
 	ASSERT_TRUE( obj.CreateInstance() );
 	EXPECT_EQ( BlueCFindMethod( obj->ClassType(), "NoSuchMethod", 12 ), nullptr );
 	EXPECT_EQ( BlueCFindMethod( obj->ClassType(), nullptr, 0 ), nullptr );
+	// The length counts, not a NUL inside it, and a prefix is not a match
+	EXPECT_EQ( BlueCFindMethod( obj->ClassType(), "IntArity3\0xyz", 13 ), nullptr );
+	EXPECT_EQ( BlueCFindMethod( obj->ClassType(), "IntArity", 8 ), nullptr );
+	EXPECT_NE( BlueCFindMethod( obj->ClassType(), "IntArity3xyz", 9 ), nullptr );
 }
 
 

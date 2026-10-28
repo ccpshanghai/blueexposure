@@ -44,9 +44,11 @@ bool BlueCAbiDetail::CheckArgumentCount( const BlueCValue* args, uint32_t argc, 
 // Lookup
 //--------------------------------------------------------------------
 
+// name need not be NUL-terminated and may hold a NUL, so candidate's length is checked first:
+// strncmp would stop at that NUL and candidate[nameLength] could lie past candidate's end
 static bool BlueCNameEquals( const char* candidate, const char* name, size_t nameLength )
 {
-	return candidate && strncmp( candidate, name, nameLength ) == 0 && candidate[nameLength] == 0;
+	return candidate && strnlen( candidate, nameLength + 1 ) == nameLength && memcmp( candidate, name, nameLength ) == 0;
 }
 
 const BlueCMethodDef* BlueCFindMethod( const Be::ClassInfo* type, const char* name, size_t nameLength )

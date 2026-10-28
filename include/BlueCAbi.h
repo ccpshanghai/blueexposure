@@ -149,6 +149,10 @@ typedef struct BlueCError
  * Each returns BLUE_OK or a negative BlueCStatus; on error it also fills err (when err is not
  * null) and leaves out as BLUE_VK_NONE. out may be null to discard the result. Module
  * functions use BlueCMethodFn and ignore self.
+ *
+ * out is overwritten without being released. err must be initialised ({ BLUE_OK, null, 0 })
+ * or hold an earlier error: filling it frees the message it holds. On success err is left as
+ * it was, so the returned status, not err.code, says whether a call failed.
  *------------------------------------------------------------------------------------------*/
 typedef int32_t ( *BlueCMethodFn )( BlueObject* self, const BlueCValue* args, uint32_t argc, BlueCValue* out, BlueCError* err );
 typedef int32_t ( *BlueCGetFn )( BlueObject* self, BlueCValue* out, BlueCError* err );
@@ -209,7 +213,10 @@ typedef struct BlueCCallback
 #elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
 #define BLUE_CABI_STATIC_ASSERT( cond, msg ) _Static_assert( cond, msg )
 #else
-#define BLUE_CABI_STATIC_ASSERT( cond, msg )
+/* C99: an array of negative size fails to compile; a declaration, so the ';' after it is valid */
+#define BLUE_CABI_CONCAT_( a, b ) a##b
+#define BLUE_CABI_CONCAT( a, b ) BLUE_CABI_CONCAT_( a, b )
+#define BLUE_CABI_STATIC_ASSERT( cond, msg ) typedef char BLUE_CABI_CONCAT( BlueCAbiStaticAssert, __LINE__ )[( cond ) ? 1 : -1]
 #endif
 
 #if UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu

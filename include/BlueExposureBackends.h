@@ -11,8 +11,9 @@
 #ifndef BlueExposureBackends_h
 #define BlueExposureBackends_h
 
+// Python is assumed unless something else was asked for: BLUE_WITH_CABI=0 on its own keeps it
 #if !defined( BLUE_WITH_PYTHON )
-#if defined( BLUE_NO_EXPOSURE ) || defined( BLUE_WITH_CABI )
+#if defined( BLUE_NO_EXPOSURE ) || ( defined( BLUE_WITH_CABI ) && BLUE_WITH_CABI )
 #define BLUE_WITH_PYTHON 0
 #else
 #define BLUE_WITH_PYTHON 1
