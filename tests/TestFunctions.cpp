@@ -23,7 +23,7 @@ bool FunctionReturningBool( bool val )
 
 MAP_FUNCTION_AND_WRAP( "FunctionReturningBool", FunctionReturningBool, "" );
 
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_WITH_CABI
 int FunctionReturningInt( int val )
 {
 	return val;
@@ -67,7 +67,7 @@ std::string FunctionReturningString( const std::string& val )
 
 MAP_FUNCTION_AND_WRAP( "FunctionReturningString", FunctionReturningString, "" );
 
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_WITH_CABI
 const wchar_t* FunctionReturningConstWChar( const wchar_t* val )
 {
 	return val;
@@ -83,7 +83,7 @@ std::wstring FunctionReturningWString( const std::wstring& val )
 
 MAP_FUNCTION_AND_WRAP( "FunctionReturningWString", FunctionReturningWString, "" );
 
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_WITH_CABI
 Vector2 FunctionReturningVector2( const Vector2& val )
 {
 	return val;

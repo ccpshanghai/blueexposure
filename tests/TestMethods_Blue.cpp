@@ -169,7 +169,7 @@ const Be::ClassInfo* TestMethods::ExposeToBlue()
 			""
 		)
 
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_WITH_CABI
 		MAP_METHOD_AND_WRAP
 		(
 			"MethodReturningConstWChar",
@@ -599,7 +599,7 @@ const Be::ClassInfo* TestMethods::ExposeToBlue()
 			""
 		)
 
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_WITH_CABI
 		MAP_METHOD_AND_WRAP
 		(
 			"MethodWithListOfIntParameter",
