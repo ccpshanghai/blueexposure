@@ -20,6 +20,11 @@ typedef std::vector<BlueMethodDefinition> FuncRegsVector;
 
 typedef FuncRegsVector TestRegsVector;
 
+#if BLUE_WITH_CABI
+// Module functions done with MAP_FUNCTION_AND_WRAP, as C thunks
+typedef std::vector<BlueCMethodDef> CFuncRegsVector;
+#endif
+
 typedef std::map<std::string, Be::BlueExposureFunctionSignature> FuncSignatures;
 
 typedef std::vector<std::pair<const char*, IRoot**>> ObjectRegsVector;
@@ -107,6 +112,14 @@ public:
 		static FuncRegsVector s_funcRegs;
 		return s_funcRegs;
 	}
+
+#if BLUE_WITH_CABI
+	static CFuncRegsVector& GetCFuncRegs()
+	{
+		static CFuncRegsVector s_cfuncRegs;
+		return s_cfuncRegs;
+	}
+#endif
 
 	static FuncSignatures& GetFuncSignatures()
 	{
@@ -222,6 +235,19 @@ public:
 		BlueRegistration::GetFuncSignatures()[expname] = signature;
 	}
 };
+
+#if BLUE_WITH_CABI
+// Registers a C thunk for a module function (MAP_FUNCTION_AND_WRAP)
+class CFunctionRegistrar
+{
+public:
+	CFunctionRegistrar( const char* expname, BlueCMethodFn func, const char* docstring )
+	{
+		BlueCMethodDef md = { expname, func, docstring, 0 };
+		BlueRegistration::GetCFuncRegs().push_back( md );
+	}
+};
+#endif
 
 // Records the signature of a module function, independently of the backends that expose it
 class FunctionSignatureRegistrar

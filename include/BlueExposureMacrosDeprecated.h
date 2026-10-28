@@ -77,7 +77,7 @@ inline PyObject* PyThunkMagic(PyObject *self, PyObject *(T::*meth)(PyObject *), 
 {\
 	_Class* temp = NULL;\
 	Be::VarEntry d = {	_name, _type, BLUE_MEMBEROFFSET(_Class, _member), BLUE_MEMBERSIZE(_member), _iid,\
-	_desc, _flags, _chooser, nullptr, nullptr};\
+	_desc, _flags, _chooser, nullptr, nullptr BLUE_CABI_NO_PROPERTY_FIELDS};\
 	s_attributes.push_back( d ); \
 }
 
@@ -85,14 +85,14 @@ inline PyObject* PyThunkMagic(PyObject *self, PyObject *(T::*meth)(PyObject *), 
 {\
 	_Class* temp = NULL;\
 	Be::VarEntry d = {	_name, _type, BLUE_MEMBEROFFSET(_Class, _member), _size, _iid,\
-	_desc, _flags, _chooser, nullptr, nullptr};\
+	_desc, _flags, _chooser, nullptr, nullptr BLUE_CABI_NO_PROPERTY_FIELDS};\
 	s_attributes.push_back( d ); \
 }
 
 #define MAPMEMBERFUNC(_name, _type, _func, _desc, _flags)\
 {\
 	_Class* temp = NULL;\
-	Be::VarEntry d = {	_name, _type, (uintptr_t)&(_func), 0, 0, _desc, _flags, nullptr, nullptr, nullptr };\
+	Be::VarEntry d = {	_name, _type, (uintptr_t)&(_func), 0, 0, _desc, _flags, nullptr, nullptr, nullptr BLUE_CABI_NO_PROPERTY_FIELDS };\
 	s_attributes.push_back( d ); \
 }
 

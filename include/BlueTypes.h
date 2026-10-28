@@ -11,6 +11,9 @@
 
 #include <CcpCore.h>
 #include "BlueScriptValue.h"
+#if BLUE_WITH_CABI
+#include "BlueCAbi.h"
+#endif
 
 #if !BLUE_WITH_PYTHON
 #ifndef __ANDROID__
@@ -336,6 +339,12 @@ namespace Be
 		BluePropertyGetterFunction		mGetProperty;
 		BluePropertySetterFunction		mSetProperty;
 
+#if BLUE_WITH_CABI
+		// properties, C-ABI backend (null for attributes)
+		BlueCGetFn			mCGet;
+		BlueCSetFn			mCSet;
+#endif
+
 		size_t GetFloatArraySize() const
 		{
 			if( mType == Be::FLOATARRAY )
@@ -399,6 +408,11 @@ namespace Be
 		mutable CcpAtomic<uint32_t>	mLockCount;
 
 		std::map<std::string, BlueExposureFunctionSignature>* mFunctionSignatures;
+
+#if BLUE_WITH_CABI
+		// Methods of this class only (parents have their own), ending with a null name
+		const BlueCMethodDef*	mCMethodTable;
+#endif
 	};
 
 

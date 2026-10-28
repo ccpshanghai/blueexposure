@@ -14,6 +14,10 @@
 #include "BlueExposureTypeSignature.h"
 #include "BlueExposureMacros.h"
 
+#if BLUE_WITH_CABI
+#include "BlueExposureHelpersCAbi.h"
+#endif
+
 #if BLUE_WITH_PYTHON
 #include "BlueExposureHelpersPython.h"
 #elif BLUE_NO_EXPOSURE

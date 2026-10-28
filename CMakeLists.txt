@@ -65,7 +65,17 @@ if(BLUE_WITH_PYTHON)
     )
 endif()
 
+if(BLUE_WITH_CABI)
+    target_sources(BlueExposure PRIVATE
+        BlueCAbi.cpp
+        BlueCAbiValue.cpp
+    )
+endif()
+
 set(PUBLIC_HEADER_FILES
+    include/BlueCAbi.h
+    include/BlueCAbiCall.h
+    include/BlueCAbiValue.h
     include/BlueCallFunction.h
     include/BlueCallFunctionHelpers.h
     include/BlueCallFunctionWithBeResult.h
@@ -74,6 +84,7 @@ set(PUBLIC_HEADER_FILES
     include/BlueExposure.h
     include/BlueExposureBackends.h
     include/BlueExposureHelpers.h
+    include/BlueExposureHelpersCAbi.h
     include/BlueExposureHelpersPython.h
     include/BlueExposureMacros.h
     include/BlueExposureMacrosCAbi.h

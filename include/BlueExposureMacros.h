@@ -210,7 +210,7 @@
 // Used by Blue2.0 Exposure macros below
 #define MAP_MEMBER(_name, _type, _member, _iid, _desc, _flags, _chooser)\
 {_name, _type, BLUE_MEMBEROFFSET(_Class, _member), BLUE_MEMBERSIZE(_member), _iid,\
-	_desc, _flags, _chooser, nullptr, nullptr}
+	_desc, _flags, _chooser, nullptr, nullptr BLUE_CABI_NO_PROPERTY_FIELDS}
 
 // This code below is scary, since it would appear to dereference a NULL pointer
 // It never actually does that though, because the templated function never bothers to look at it, only the deduced type
@@ -225,7 +225,7 @@
 
 #define MAP_ATTRIBUTE_AS_CUSTOM_BINARY_BLOCK( attributeName )\
 {\
-	static Be::VarEntry d = {attributeName, Be::BINARYBLOCK, 0, 0, nullptr, "", Be::PERSISTONLY, nullptr, nullptr, nullptr};\
+	static Be::VarEntry d = {attributeName, Be::BINARYBLOCK, 0, 0, nullptr, "", Be::PERSISTONLY, nullptr, nullptr, nullptr BLUE_CABI_NO_PROPERTY_FIELDS};\
 	s_attributes.push_back( d );\
 }
 
