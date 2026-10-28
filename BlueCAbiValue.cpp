@@ -5,11 +5,13 @@
 
 #include "include/BlueCAbiValue.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <new>
 
 #if defined( __GNUC__ ) || defined( __clang__ )
 #include <cxxabi.h>
@@ -156,6 +158,8 @@ const char* BlueCKindName( uint32_t kind )
 		return "array";
 	case BLUE_VK_MAP:
 		return "map";
+	case BLUE_VK_CALLBACK:
+		return "callback";
 	default:
 		return "invalid kind";
 	}
@@ -252,11 +256,110 @@ void BlueCValueRelease( BlueCValue* value )
 	case BLUE_VK_MAP:
 		BlueCReleaseValues( value->u.map.kv, 2 * value->u.map.count );
 		break;
+	case BLUE_VK_CALLBACK:
+		BlueCCallbackRelease( value->u.callback );
+		break;
 	default:
 		break;
 	}
 
 	BlueCValueSetNone( *value );
+}
+
+
+//--------------------------------------------------------------------
+// Callback handles
+//--------------------------------------------------------------------
+
+struct BlueCallbackHandle
+{
+	BlueCCallback callback;
+	std::atomic<uint32_t> refCount;
+};
+
+BlueCallbackHandle* BlueCCallbackCreate( const BlueCCallback* callback, BlueCError* err )
+{
+	if( !callback || !callback->fn )
+	{
+		BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "callback without a function" );
+		return nullptr;
+	}
+	void* memory = CCP_MALLOC( "BlueCallbackHandle", sizeof( BlueCallbackHandle ) );
+	if( !memory )
+	{
+		BlueCSetError( err, BLUE_E_OUT_OF_MEMORY, "out of memory allocating a callback" );
+		return nullptr;
+	}
+	BlueCallbackHandle* handle = new( memory ) BlueCallbackHandle;
+	handle->callback = *callback;
+	handle->refCount.store( 1, std::memory_order_relaxed );
+	return handle;
+}
+
+void BlueCCallbackAddRef( BlueCallbackHandle* handle )
+{
+	if( handle )
+	{
+		handle->refCount.fetch_add( 1, std::memory_order_relaxed );
+	}
+}
+
+void BlueCCallbackRelease( BlueCallbackHandle* handle )
+{
+	if( !handle || handle->refCount.fetch_sub( 1, std::memory_order_acq_rel ) != 1 )
+	{
+		return;
+	}
+	if( handle->callback.destroy )
+	{
+		handle->callback.destroy( handle->callback.user_data );
+	}
+	handle->~BlueCallbackHandle();
+	CCP_FREE( handle );
+}
+
+const BlueCCallback* BlueCCallbackGet( const BlueCallbackHandle* handle )
+{
+	return handle ? &handle->callback : nullptr;
+}
+
+void BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc )
+{
+	if( handle )
+	{
+		handle->callback.fn( handle->callback.user_data, args, argc );
+	}
+}
+
+void BlueCWrapCallback( BlueCallbackHandle* handle, BlueCValue& out )
+{
+	BlueCValueSetNone( out );
+	if( handle )
+	{
+		BlueCCallbackAddRef( handle );
+		out.kind = BLUE_VK_CALLBACK;
+		out.u.callback = handle;
+	}
+}
+
+bool BlueCExtractCallback( const BlueCValue& value, BlueCallbackHandle*& result, unsigned argIndex, BlueCError* err )
+{
+	switch( value.kind )
+	{
+	case BLUE_VK_NONE:
+		result = nullptr;
+		return true;
+	case BLUE_VK_CALLBACK:
+		if( !value.u.callback )
+		{
+			BlueCSetArgumentError( err, BLUE_E_INVALID_ARGUMENT, argIndex, "callback value with a null pointer (use none)" );
+			return false;
+		}
+		result = value.u.callback;
+		return true;
+	default:
+		return BlueCTypeMismatch( err, argIndex, "callback", value );
+	}
 }
 
 

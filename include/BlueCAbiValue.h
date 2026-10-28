@@ -25,6 +25,8 @@
 //   Vector3i                           VECTOR 3 | INT32
 //   Matrix                             VECTOR 16 | FLOAT | MATRIX, components in u.arr
 //   pointer to a Blue class/interface  OBJECT (+1 on wrap, borrowed on extract), NONE for null
+//   BlueScriptCallback                 CALLBACK (+1 on wrap, blue's own reference on extract),
+//                                      NONE for no callback; only with C-ABI as the only backend
 //   std::vector, std::list, std::pair  ARRAY
 //   std::map                           MAP
 //   Be::Optional<T>                    as T (NONE when unassigned, on wrap)
@@ -157,10 +159,32 @@ BLUEIMPORT bool BlueCWrapMatrix( const float* elements16, BlueCValue& out, BlueC
 // OBJECT holding one reference to obj (obj is locked), or NONE for null
 BLUEIMPORT void BlueCWrapObject( IRoot* obj, BlueCValue& out );
 
+// CALLBACK holding one reference to handle (added), or NONE for null
+BLUEIMPORT void BlueCWrapCallback( BlueCallbackHandle* handle, BlueCValue& out );
+
+// The handle of a CALLBACK (borrowed), or null from NONE
+BLUEIMPORT bool BlueCExtractCallback( const BlueCValue& value, BlueCallbackHandle*& result, unsigned argIndex, BlueCError* err );
+
 // count NONE values, or null with BLUE_E_OUT_OF_MEMORY in err. Freed with BlueCFreeValues
 // (the holder of an ARRAY / MAP does this in BlueCValueRelease).
 BLUEIMPORT BlueCValue* BlueCAllocateValues( size_t count, BlueCError* err );
 BLUEIMPORT void BlueCFreeValues( BlueCValue* values );
+
+//--------------------------------------------------------------------
+// Callback handles (BlueCAbi.h, BlueCCallback)
+//--------------------------------------------------------------------
+
+// A handle holding one reference, around a copy of callback. Fails (null, err filled) when
+// callback or its fn is null, or out of memory; destroy is then not called and the host still
+// owns user_data.
+BLUEIMPORT BlueCallbackHandle* BlueCCallbackCreate( const BlueCCallback* callback, BlueCError* err );
+BLUEIMPORT void BlueCCallbackAddRef( BlueCallbackHandle* handle );
+// Drops one reference; the last one calls destroy( user_data ) and frees the handle
+BLUEIMPORT void BlueCCallbackRelease( BlueCallbackHandle* handle );
+// The callback the handle was created from, so a host can recognise its own
+BLUEIMPORT const BlueCCallback* BlueCCallbackGet( const BlueCallbackHandle* handle );
+// Calls fn( user_data, args, argc ); args stay owned by the caller
+BLUEIMPORT void BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCValue* args, uint32_t argc );
 
 // Strict UTF-8 <-> wchar_t (UTF-32, or UTF-16 where wchar_t is 16 bits)
 BLUEIMPORT bool BlueCUtf8ToWide( const char* utf8, size_t length, std::wstring& result );

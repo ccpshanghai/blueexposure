@@ -143,6 +143,16 @@ BlueScriptCallbackStatus::BlueScriptCallbackStatus( Status hasException )
 #endif
 }
 
+#if BLUE_CABI_CALLBACKS
+BlueScriptCallbackStatus::BlueScriptCallbackStatus( Status hasException, const char* message )
+	:m_hasException( hasException ),
+	m_muteException( false ),
+	m_exceptionReported( false ),
+	m_message( message ? message : "" )
+{
+}
+#endif
+
 BlueScriptCallbackStatus::~BlueScriptCallbackStatus()
 {
 	ReportException();
@@ -163,6 +173,8 @@ BlueScriptCallbackStatus::BlueScriptCallbackStatus( const BlueScriptCallbackStat
 	, m_type( other.m_type ),
 	m_value( other.m_value ),
 	m_traceback( other.m_traceback )
+#elif BLUE_CABI_CALLBACKS
+	, m_message( other.m_message )
 #endif
 {
 #if BLUE_WITH_PYTHON
@@ -194,6 +206,8 @@ BlueScriptCallbackStatus& BlueScriptCallbackStatus::operator=( const BlueScriptC
 	Py_XINCREF( m_type );
 	Py_XINCREF( m_value );
 	Py_XINCREF( m_traceback );
+#elif BLUE_CABI_CALLBACKS
+	m_message = other.m_message;
 #endif
 	return *this;
 }
@@ -223,13 +237,16 @@ void BlueScriptCallbackStatus::ReportException()
 	}
 	std::string exception = FormatException( m_type, m_value, m_traceback );
 	CCP_LOGERR( "%s", exception.c_str() );
+#elif BLUE_CABI_CALLBACKS
+	if( !m_message.empty() )
+	{
+		CCP_LOGERR( "Script callback failed: %s", m_message.c_str() );
+	}
 #endif
 }
 
 BLUEIMPORT BlueScriptCallback::BlueScriptCallback()
-#if BLUE_WITH_PYTHON
 	:m_callback( nullptr )
-#endif
 {
 }
 
@@ -238,8 +255,18 @@ BLUEIMPORT BlueScriptCallback::BlueScriptCallback( const BlueScriptCallback& oth
 {
 #if BLUE_WITH_PYTHON
 	Py_XINCREF( m_callback );
+#elif BLUE_CABI_CALLBACKS
+	BlueCCallbackAddRef( m_callback );
 #endif
 }
+
+#if BLUE_CABI_CALLBACKS
+BLUEIMPORT BlueScriptCallback::BlueScriptCallback( BlueCallbackHandle* handle )
+	:m_callback( handle )
+{
+	BlueCCallbackAddRef( m_callback );
+}
+#endif
 
 BLUEIMPORT BlueScriptCallback::~BlueScriptCallback()
 {
@@ -248,7 +275,7 @@ BLUEIMPORT BlueScriptCallback::~BlueScriptCallback()
 
 BLUEIMPORT BlueScriptCallback& BlueScriptCallback::operator=( const BlueScriptCallback& other )
 {
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_CABI_CALLBACKS
 	if( m_callback == other.m_callback )
 	{
 		return *this;
@@ -258,15 +285,17 @@ BLUEIMPORT BlueScriptCallback& BlueScriptCallback::operator=( const BlueScriptCa
 	m_callback = other.m_callback;
 #if BLUE_WITH_PYTHON
 	Py_XINCREF( m_callback );
+#elif BLUE_CABI_CALLBACKS
+	BlueCCallbackAddRef( m_callback );
 #endif
 	return *this;
 }
 
 BLUEIMPORT bool BlueScriptCallback::IsValid() const
 {
-#if BLUE_WITH_PYTHON
+#if BLUE_WITH_PYTHON || BLUE_CABI_CALLBACKS
 	return m_callback != nullptr;
-#elif BLUE_NO_EXPOSURE
+#else
 	return false;
 #endif
 }
@@ -276,6 +305,10 @@ BLUEIMPORT void BlueScriptCallback::Destroy()
 #if BLUE_WITH_PYTHON
 	Py_XDECREF( m_callback );
 	m_callback = nullptr;
+#elif BLUE_CABI_CALLBACKS
+	BlueCallbackHandle* callback = m_callback;
+	m_callback = nullptr;
+	BlueCCallbackRelease( callback );
 #endif
 }
 
@@ -297,10 +330,19 @@ BLUEIMPORT BlueScriptCallbackStatus BlueScriptCallback::CallVoid()
 		return BlueScriptCallbackStatus( BlueScriptCallbackStatus::OK );
 	}
 	return BlueScriptCallbackStatus( BlueScriptCallbackStatus::EXCEPTION );
-#elif BLUE_NO_EXPOSURE
+#elif BLUE_CABI_CALLBACKS
+	return CallC();
+#else
 	return BlueScriptCallbackStatus::EXCEPTION;
 #endif
 }
+
+#if BLUE_CABI_CALLBACKS
+BlueScriptCallbackStatus BlueScriptCallback::CallReturningValueC()
+{
+	return BlueScriptCallbackStatus( BlueScriptCallbackStatus::CALL_ERROR, "a C callback cannot return a value" );
+}
+#endif
 
 BlueScriptValue BlueWrapReturnValueImpl( BlueScriptArguments, const BlueScriptCallback& val )
 {
@@ -314,7 +356,7 @@ BlueScriptValue BlueWrapReturnValueImpl( BlueScriptArguments, const BlueScriptCa
 	{
 		Py_RETURN_NONE;
 	}
-#elif BLUE_NO_EXPOSURE
+#else
 	return nullptr;
 #endif
 }
@@ -335,7 +377,7 @@ bool BlueExtractArgumentImpl( BlueScriptValue argument, BlueScriptCallback& resu
 		Py_INCREF( result.m_callback );
 	}
 	return true;
-#elif BLUE_NO_EXPOSURE
+#else
 	return false;
 #endif
 }

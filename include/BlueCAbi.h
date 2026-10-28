@@ -8,10 +8,11 @@
  *
  * Ownership:
  *   - Inputs (thunk arguments, values passed to setters) are borrowed for the duration of the
- *     call; an object in an input value is not locked or released by the callee.
+ *     call; the caller's reference to an object or callback in an input value is neither
+ *     taken nor released (the callee adds its own reference if it keeps one).
  *   - Outputs (a thunk's out value, BlueCError.message) belong to the caller and are freed
- *     with BlueCValueRelease / BlueCErrorClear. An object in an output value carries one
- *     reference (+1).
+ *     with BlueCValueRelease / BlueCErrorClear. An object or callback in an output value carries
+ *     one reference (+1).
  *   - Strings are UTF-8 with an explicit length. Strings blue produces are additionally
  *     NUL-terminated; strings passed in need not be.
  */
@@ -35,6 +36,10 @@ extern "C" {
 
 /* An exposed object. Opaque on the C side; it is an IRoot* of the object. */
 typedef struct BlueObject BlueObject;
+
+/* A host callback (BlueCCallback) wrapped for blue. Opaque and reference counted, like an
+ * object: values borrow it, blue takes its own reference when it keeps it. */
+typedef struct BlueCallbackHandle BlueCallbackHandle;
 
 /*--------------------------------------------------------------------------------------------
  * Status codes. Every thunk returns one of these; BLUE_OK is 0 and every error is negative.
@@ -71,7 +76,8 @@ typedef enum BlueCValueKind
 	BLUE_VK_OBJECT = 6,		/* u.obj, never null (a null object is BLUE_VK_NONE) */
 	BLUE_VK_VECTOR = 7,		/* aux describes it; u.vec for up to 4 components, u.arr otherwise */
 	BLUE_VK_ARRAY = 8,		/* u.arr: std::vector, std::list, std::pair */
-	BLUE_VK_MAP = 9			/* u.map: std::map */
+	BLUE_VK_MAP = 9,		/* u.map: std::map */
+	BLUE_VK_CALLBACK = 10	/* u.callback, never null (a null callback is BLUE_VK_NONE) */
 } BlueCValueKind;
 
 /* aux of a BLUE_VK_VECTOR: component count | element type | tag. Components are always stored
@@ -106,6 +112,7 @@ struct BlueCValue
 			size_t len;
 		} str;
 		BlueObject* obj;
+		BlueCallbackHandle* callback;
 		struct
 		{
 			double v[4];
@@ -154,7 +161,10 @@ typedef struct BlueCMethodDef
 } BlueCMethodDef;
 
 /*--------------------------------------------------------------------------------------------
- * Callbacks into the host. destroy is called exactly once, when blue drops the callback.
+ * Callbacks into the host. The host wraps one in a BlueCallbackHandle (BlueCCallbackCreate,
+ * holding one reference) and passes the handle in BLUE_VK_CALLBACK values. destroy (may be
+ * null) is called exactly once, when the last reference - the host's or blue's - is released.
+ * fn gets the arguments borrowed for the duration of the call, on the thread blue calls it from.
  *------------------------------------------------------------------------------------------*/
 typedef struct BlueCCallback
 {
@@ -184,6 +194,7 @@ BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, kind ) == 0, "BlueCValue.kind off
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, aux ) == 4, "BlueCValue.aux offset" );
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u ) == 8, "BlueCValue.u offset" );
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u.str.ptr ) == 8, "BlueCValue.u.str.ptr offset" );
+BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u.callback ) == 8, "BlueCValue.u.callback offset" );
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u.str.len ) == 16, "BlueCValue.u.str.len offset" );
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u.vec.v ) == 8, "BlueCValue.u.vec offset" );
 BLUE_CABI_STATIC_ASSERT( offsetof( BlueCValue, u.arr.items ) == 8, "BlueCValue.u.arr.items offset" );

@@ -31,4 +31,8 @@
 #error "BLUE_NO_EXPOSURE cannot be combined with BLUE_WITH_PYTHON or BLUE_WITH_CABI"
 #endif
 
+// BlueScriptCallback holds a C callback (BlueCCallback) when C-ABI is the only backend. With both
+// backends it stays the Python callback, and has no C-ABI conversion.
+#define BLUE_CABI_CALLBACKS ( BLUE_WITH_CABI && !BLUE_WITH_PYTHON )
+
 #endif // BlueExposureBackends_h

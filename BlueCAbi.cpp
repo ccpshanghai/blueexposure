@@ -261,6 +261,11 @@ static int32_t BlueCGetAttribute( IRoot* obj, const Be::VarEntry* entry, ptrdiff
 	case Be::IROOTWEAKREF:
 		BlueCWrapObject( *reinterpret_cast<const BlueWeakRefBase*>( value ), out );
 		break;
+#if BLUE_CABI_CALLBACKS
+	case Be::SCRIPTCALLBACK:
+		ok = BlueCWrap( *reinterpret_cast<const BlueScriptCallback*>( value ), out, &err );
+		break;
+#endif
 	default:
 		return BlueCSetError( &err, BLUE_E_UNSUPPORTED, "attribute '%s' has VARTYPE %d, which has no C-ABI conversion", entry->mName, int( entry->mType ) );
 	}
@@ -457,6 +462,11 @@ static int32_t BlueCSetAttribute( IRoot* obj, const Be::VarEntry* entry, ptrdiff
 			return err.code;
 		}
 		break;
+#if BLUE_CABI_CALLBACKS
+	case Be::SCRIPTCALLBACK:
+		ok = BlueCExtract( in, *reinterpret_cast<BlueScriptCallback*>( value ), BLUE_CABI_VALUE_INDEX, &err );
+		break;
+#endif
 	default:
 		// Includes IROOT: the Python backend copies into embedded objects, which the C ABI
 		// does not offer
