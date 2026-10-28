@@ -2,6 +2,11 @@
 
 include(CMakeFindDependencyMacro)
 
+# Script backends this package was built with (0 or 1). The exported BlueExposure target carries
+# the same values as the BLUE_WITH_PYTHON / BLUE_WITH_CABI compile definitions.
+set(CARBON_BLUEEXPOSURE_WITH_PYTHON @BLUE_WITH_PYTHON_VALUE@ CACHE INTERNAL "carbon-blueexposure was built with the Python backend")
+set(CARBON_BLUEEXPOSURE_WITH_CABI @BLUE_WITH_CABI_VALUE@ CACHE INTERNAL "carbon-blueexposure was built with the C-ABI backend")
+
 # This file is generated automatically by cmake as part of the install step
 include(${CMAKE_CURRENT_LIST_DIR}/carbon-blueexposure.cmake)
 
@@ -36,4 +41,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/carbon-blueexposure.cmake)
 #
 
 find_dependency(carbon-core CONFIG REQUIRED)
-find_dependency(Python3 COMPONENTS Development REQUIRED)
+if(CARBON_BLUEEXPOSURE_WITH_PYTHON)
+    find_dependency(Python3 COMPONENTS Development REQUIRED)
+endif()

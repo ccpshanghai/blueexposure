@@ -9,8 +9,26 @@ include(cmake/CcpDocsGenerator.cmake)
 include(cmake/CcpPackageConfigHelpers.cmake)
 include(cmake/CcpBuildConfigurations.cmake)
 
+# Script backends. Each one registers every exposed class with its own binding layer; they are
+# independent, and with both off (the former BLUE_NO_EXPOSURE) only the C++ object system is built.
+option(BLUE_WITH_PYTHON "Build the CPython exposure backend" ON)
+option(BLUE_WITH_CABI "Build the plain C exposure backend" OFF)
+
+if(BLUE_WITH_PYTHON)
+    set(BLUE_WITH_PYTHON_VALUE 1)
+else()
+    set(BLUE_WITH_PYTHON_VALUE 0)
+endif()
+if(BLUE_WITH_CABI)
+    set(BLUE_WITH_CABI_VALUE 1)
+else()
+    set(BLUE_WITH_CABI_VALUE 0)
+endif()
+
 find_package(carbon-core CONFIG REQUIRED)
-find_package(Python3 COMPONENTS Development Interpreter REQUIRED)
+if(BLUE_WITH_PYTHON)
+    find_package(Python3 COMPONENTS Development Interpreter REQUIRED)
+endif()
 
 ccp_add_library(BlueExposure STATIC
     BlueClasses.cpp
@@ -20,12 +38,7 @@ ccp_add_library(BlueExposure STATIC
     BlueExtractArgument.cpp
     BlueListUtil.cpp
     BlueMemberIterator.cpp
-    BluePythonThunkers.cpp
-    BluePythonThunkers.h
-    BluePyWrap.cpp
-    BluePyWrap.h
     BlueRegistration.cpp
-    BlueRegistrationPython.cpp
     BlueScriptCallback.cpp
     BlueSharedString.cpp
     BlueStdResult.cpp
@@ -37,10 +50,20 @@ ccp_add_library(BlueExposure STATIC
     Copier_Blue.cpp
     Find.cpp
     InterfaceDefinitions.cpp
-    PythonKlass.cpp
     TypeInfo.cpp
     TypeInfo.h
 )
+
+if(BLUE_WITH_PYTHON)
+    target_sources(BlueExposure PRIVATE
+        BluePythonThunkers.cpp
+        BluePythonThunkers.h
+        BluePyWrap.cpp
+        BluePyWrap.h
+        BlueRegistrationPython.cpp
+        PythonKlass.cpp
+    )
+endif()
 
 set(PUBLIC_HEADER_FILES
     include/BlueCallFunction.h
@@ -49,6 +72,7 @@ set(PUBLIC_HEADER_FILES
     include/BlueClass.h
     include/BlueDict.h
     include/BlueExposure.h
+    include/BlueExposureBackends.h
     include/BlueExposureHelpers.h
     include/BlueExposureHelpersPython.h
     include/BlueExposureMacros.h
@@ -99,14 +123,19 @@ set(PUBLIC_HEADER_FILES
 
 target_sources(BlueExposure PRIVATE ${PUBLIC_HEADER_FILES})
 
+# Always defined to 0 or 1, so consumers can test them with #if
 target_compile_definitions(BlueExposure
     PUBLIC
-        BLUE_WITH_PYTHON
+        BLUE_WITH_PYTHON=${BLUE_WITH_PYTHON_VALUE}
+        BLUE_WITH_CABI=${BLUE_WITH_CABI_VALUE}
     PRIVATE
         BLUEBUILD
 )
 
-target_link_libraries(BlueExposure PUBLIC CcpCore Python3::Python)
+target_link_libraries(BlueExposure PUBLIC CcpCore)
+if(BLUE_WITH_PYTHON)
+    target_link_libraries(BlueExposure PUBLIC Python3::Python)
+endif()
 
 target_include_directories(BlueExposure
     PUBLIC
@@ -118,7 +147,10 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     option(BUILD_TESTING "Build tests. Enabled by default." ON)
     include(CTest)
     if(BUILD_TESTING)
-	    add_subdirectory(tests)
+        if(BLUE_WITH_PYTHON)
+            # Python unittest suite and the BlueSmartPy gtest suite (tests/cpp)
+            add_subdirectory(tests)
+        endif()
     endif()
 
     option (INSTALL_TO_MONOLITH "Install this package to a perforce branch vendor folder - provided for backwards compatability" OFF)
@@ -134,10 +166,14 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         # Install rule for available public headers
         install(FILES ${PUBLIC_HEADER_FILES} DESTINATION include)
 
+        set(BLUE_VENDOR_DEPENDENCIES CcpCore)
+        if(BLUE_WITH_PYTHON)
+            list(APPEND BLUE_VENDOR_DEPENDENCIES Python)
+        endif()
         configure_ccp_vendor_config_file(
                 TARGET BlueExposure
                 DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/BlueExposureConfig.cmake"
-                DEPENDENCIES "CcpCore;Python"
+                DEPENDENCIES "${BLUE_VENDOR_DEPENDENCIES}"
         )
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/BlueExposureConfig.cmake DESTINATION .)
     else() # VCPKG install mode
@@ -158,8 +194,14 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
                 DESTINATION ${CMAKE_INSTALL_PREFIX}/share/carbon-blueexposure
                 FILE carbon-blueexposure.cmake
         )
+        # The config file records which backends this build has
+        configure_file(
+                carbon-blueexposureConfig.cmake.in
+                ${CMAKE_CURRENT_BINARY_DIR}/carbon-blueexposureConfig.cmake
+                @ONLY
+        )
         install(
-                FILES carbon-blueexposureConfig.cmake
+                FILES ${CMAKE_CURRENT_BINARY_DIR}/carbon-blueexposureConfig.cmake
                 DESTINATION ${CMAKE_INSTALL_PREFIX}/share/carbon-blueexposure
         )
     endif()

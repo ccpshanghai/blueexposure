@@ -50,7 +50,8 @@ if(CMAKE_IMPORT_LIBRARY_SUFFIX)
     )
 endif()
 
-target_compile_definitions(BlueExposureTest PUBLIC BLUEBUILD BLUE_WITH_PYTHON)
+# BLUE_WITH_PYTHON / BLUE_WITH_CABI come from BlueExposure
+target_compile_definitions(BlueExposureTest PUBLIC BLUEBUILD)
 
 target_link_libraries(BlueExposureTest
     PRIVATE BlueExposure

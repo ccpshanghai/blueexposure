@@ -11,10 +11,7 @@
 #ifndef BlueExposure_h
 #define BlueExposure_h
 
-#if !defined(BLUE_WITH_PYTHON) && !defined(BLUE_NO_EXPOSURE)
-#define BLUE_WITH_PYTHON 1
-#endif
-
+#include "BlueExposureBackends.h"
 #include "BlueTypes.h"
 #include "BlueClass.h"
 #include "BlueDict.h"

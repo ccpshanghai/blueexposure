@@ -1,16 +1,21 @@
 {
   "dependencies": [
     {
-      "name": "python3",
-      "version>=": "3.12.9#1"
-    },
-    {
       "name": "carbon-core",
       "version>=": "2.4.0"
     }
   ],
-  "default-features": ["tests"],
+  "default-features": ["python", "tests"],
   "features": {
+    "python": {
+      "description": "Python exposure backend (BLUE_WITH_PYTHON)",
+      "dependencies": [
+        {
+          "name": "python3",
+          "version>=": "3.12.9#1"
+        }
+      ]
+    },
     "tests": {
       "description": "Build test suite",
       "dependencies": [

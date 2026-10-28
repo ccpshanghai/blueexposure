@@ -9,6 +9,8 @@
 #ifndef BlueScriptValue_h
 #define BlueScriptValue_h
 
+#include "BlueExposureBackends.h"
+
 #if BLUE_WITH_PYTHON
 
 #include <Python.h>
