@@ -22,6 +22,7 @@ set_target_properties(BlueExposureCAbiHeaderC PROPERTIES
 add_executable(BlueExposureCAbiTests
     main.cpp
     TestCAbiCallbacks.cpp
+    TestCAbiFind.cpp
     TestCAbiCalls.cpp
     TestCAbiMembers.cpp
     TestCAbiValues.cpp

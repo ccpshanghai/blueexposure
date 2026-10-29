@@ -13,7 +13,12 @@
 #include "IBlueDict.h"
 #include "BlueUtil.h"
 #include "BlueTypes.h"
+#if BLUE_WITH_PYTHON
 #include "BlueSmartPy.h"
+#endif
+
+#include <string>
+#include <vector>
 
 class RouteStep
 {
@@ -52,15 +57,15 @@ private:
 };
 
 bool FindFirstRoute( IRoot* from, IRoot* to, std::vector<RouteStep>* result );
-BluePy PyFindFirstRoute( IRoot* from, IRoot* to );
-
 std::vector<IRootPtr> FindInterface( IRoot* obj, const char* iidName );
-
-PyObject* PyFindImpl( IRoot* pThis, PyObject* args );
-
-BluePy FindRoute( IRoot* from, IRoot* to );
 bool FindReference( IRoot* from, IRoot* to );
+
+#if BLUE_WITH_PYTHON
+BluePy PyFindFirstRoute( IRoot* from, IRoot* to );
+PyObject* PyFindImpl( IRoot* pThis, PyObject* args );
+BluePy FindRoute( IRoot* from, IRoot* to );
 BluePy FindAllReferences( IRoot* root );
+#endif
 
 
 template <typename OnAttribute, typename OnListItem, typename OnDictItem, typename Filter>

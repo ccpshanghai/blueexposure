@@ -5,12 +5,14 @@
 // Copyright (c) 2026 CCP Games
 //
 
-#if BLUE_WITH_PYTHON
-
 #include "Find.h"
 
+#include <algorithm>
+#include <functional>
 #include <vector>
+#if BLUE_WITH_PYTHON
 #include "include/BluePythonObject.h"
+#endif
 #include "include/BlueUtil.h"
 
 namespace
@@ -144,6 +146,7 @@ struct RouteStepStackEntry : public RouteStackEntry
 };
 
 
+#if BLUE_WITH_PYTHON
 bool IsMatch( IRoot* obj, const idvector_t& clsids )
 {
 	// do we have a winner here?  See if the class matches what we are looking for.
@@ -154,6 +157,7 @@ bool IsMatch( IRoot* obj, const idvector_t& clsids )
 				return true;
 	return false;
 }
+#endif
 
 
 bool IsMatch( IRoot* obj, const Be::IID& iid )
@@ -173,6 +177,7 @@ bool IsMatch( IRoot* obj, const Be::IID& iid )
 }
 
 
+#if BLUE_WITH_PYTHON
 PyObject* GetPathItem( IRoot* parent, const Be::VarEntry* attr, ssize_t index )
 {
 	if( attr )
@@ -244,6 +249,7 @@ PyObject* FindSingle( IRoot* obj, const idvector_t& ids, int maxLevel, bool prun
 	}
 	return result;
 }
+#endif
 
 
 template <typename StackEntryType, typename Op>
@@ -310,6 +316,7 @@ void EnumerateRoutes( IRoot* from, IRoot* to, const Op& operation )
 }
 
 
+#if BLUE_WITH_PYTHON
 PyObject* PyFindImpl( IRoot* pThis, PyObject* args )
 {
 	PyObject *clsidobj;
@@ -347,6 +354,7 @@ PyObject* PyFindImpl( IRoot* pThis, PyObject* args )
 
 	return FindSingle( pThis, clsids, maxLevel, !!bPrune );
 }
+#endif
 
 
 std::vector<IRootPtr> FindInterface( IRoot *obj, const char* iidName )
@@ -433,6 +441,7 @@ bool FindFirstRoute( IRoot* from, IRoot* to, std::vector<RouteStep>* result )
 }
 
 
+#if BLUE_WITH_PYTHON
 BluePy FindRoute( IRoot* from, IRoot* to )
 {
 	if( !from || !to )
@@ -502,6 +511,7 @@ BluePy PyFindFirstRoute( IRoot* from, IRoot* to )
 	PyErr_Format( PyExc_ValueError, "No valid route found." );
 	return BluePy();
 }
+#endif
 
 
 bool FindReference( IRoot* from, IRoot* to )
@@ -548,6 +558,7 @@ bool FindReference( IRoot* from, IRoot* to )
 }
 
 
+#if BLUE_WITH_PYTHON
 BluePy FindAllReferences( IRoot* root )
 {
 	PyObject* result = PyDict_New();
@@ -597,6 +608,7 @@ BluePy FindAllReferences( IRoot* root )
 	}
 	return BluePy( result );
 }
+#endif
 
 
 RouteStep::RouteStep() :
@@ -688,5 +700,3 @@ IRoot* RouteStep::GetNextObject( IRoot* parent )
 	}
 	return nullptr;
 }
-
-#endif
