@@ -209,8 +209,19 @@ int32_t BlueCPropertySetter( BlueObject* self, const BlueCValue* in, BlueCError*
 // class's own member or method hides an inherited one of the same name.
 //--------------------------------------------------------------------
 
-// The method named name of type or one of its parents, or null
+// The method named name of type or one of its parents, or else an interface method
+// (BLUE_REGISTER_CTHUNKER) of an interface that type or one of its parents maps; null if none.
+// A class's methods hide its interfaces' methods of the same name, as in Python.
 BLUEIMPORT const BlueCMethodDef* BlueCFindMethod( const Be::ClassInfo* type, const char* name, size_t nameLength );
+
+// Called by BlueCForEachMethod with a method and its signature (null when none was recorded).
+// Returns false to stop.
+typedef bool ( *BlueCMethodVisitor )( const BlueCMethodDef* method, const Be::BlueExposureFunctionSignature* signature, void* context );
+
+// Visit every method BlueCFindMethod can find for type, in its lookup order (own methods,
+// parents' methods, interface methods), each name once with the method BlueCFindMethod returns
+// for it. Returns false if visitor stopped early.
+BLUEIMPORT bool BlueCForEachMethod( const Be::ClassInfo* type, BlueCMethodVisitor visitor, void* context );
 
 // The function named name in a module's function list (BlueRegistration::GetCFuncRegs), or null
 BLUEIMPORT const BlueCMethodDef* BlueCFindFunction( const std::vector<BlueCMethodDef>& functions, const char* name, size_t nameLength );

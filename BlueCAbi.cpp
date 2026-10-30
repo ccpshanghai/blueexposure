@@ -8,6 +8,8 @@
 #include "include/INotify.h"
 
 #include <cstring>
+#include <set>
+#include <string>
 #include <vector>
 
 
@@ -51,23 +53,105 @@ static bool BlueCNameEquals( const char* candidate, const char* name, size_t nam
 	return candidate && strnlen( candidate, nameLength + 1 ) == nameLength && memcmp( candidate, name, nameLength ) == 0;
 }
 
+// Where a method came from, for its signature: a class's own table (the signature is in the
+// class's mFunctionSignatures, looked up only on demand) or an interface's registration
+struct BlueCMethodSource
+{
+	const Be::ClassInfo* owner;
+	const Be::BlueExposureFunctionSignature* signature;
+
+	const Be::BlueExposureFunctionSignature* GetSignature( const BlueCMethodDef* def ) const
+	{
+		if( !owner || !owner->mFunctionSignatures )
+		{
+			return signature;
+		}
+		auto found = owner->mFunctionSignatures->find( def->name );
+		return found != owner->mFunctionSignatures->end() ? &found->second : nullptr;
+	}
+};
+
+// Call visit( method, source ) for each method of type, in lookup order: the class's own
+// table, its parents' tables, then the interface methods (BLUE_REGISTER_CTHUNKER) of every
+// interface the class and its parents map, in that order - the order Python's attribute lookup
+// takes them (BlueRttiType::Init). A name can come up more than once; the first one counts.
+// Stops, returning true, as soon as visit returns true.
+template< typename Visit >
+static bool BlueCVisitMethods( const Be::ClassInfo* type, Visit&& visit )
+{
+	for( const Be::ClassInfo* t = type; t; t = t->mParentClassInfo )
+	{
+		for( const BlueCMethodDef* def = t->mCMethodTable; def && def->name; ++def )
+		{
+			if( visit( def, BlueCMethodSource{ t, nullptr } ) )
+			{
+				return true;
+			}
+		}
+	}
+
+	const CThunkerRegsVector& thunkers = BlueRegistration::GetGlobalCThunkerRegs();
+	if( thunkers.empty() )
+	{
+		return false;
+	}
+	for( const Be::ClassInfo* t = type; t; t = t->mParentClassInfo )
+	{
+		for( const Be::InterfaceEntry* entry = t->mInterfaceTable; entry && entry->mIID; ++entry )
+		{
+			for( const BlueCThunkerRegistration& reg : thunkers )
+			{
+				if( !reg.mIID.IsEqual( *entry->mIID ) )
+				{
+					continue;
+				}
+				for( size_t i = 0; reg.mMethods && reg.mMethods[i].name; ++i )
+				{
+					if( visit( &reg.mMethods[i], BlueCMethodSource{ nullptr, reg.mSignatures ? &reg.mSignatures[i] : nullptr } ) )
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
 const BlueCMethodDef* BlueCFindMethod( const Be::ClassInfo* type, const char* name, size_t nameLength )
 {
 	if( !name )
 	{
 		return nullptr;
 	}
-	for( ; type; type = type->mParentClassInfo )
-	{
-		for( const BlueCMethodDef* def = type->mCMethodTable; def && def->name; ++def )
+	const BlueCMethodDef* result = nullptr;
+	BlueCVisitMethods( type, [&]( const BlueCMethodDef* def, const BlueCMethodSource& ) {
+		if( BlueCNameEquals( def->name, name, nameLength ) )
 		{
-			if( BlueCNameEquals( def->name, name, nameLength ) )
-			{
-				return def;
-			}
+			result = def;
+			return true;
 		}
+		return false;
+	} );
+	return result;
+}
+
+bool BlueCForEachMethod( const Be::ClassInfo* type, BlueCMethodVisitor visitor, void* context )
+{
+	if( !visitor )
+	{
+		return true;
 	}
-	return nullptr;
+	std::set<std::string> seen;
+	const bool stopped = BlueCVisitMethods( type, [&]( const BlueCMethodDef* def, const BlueCMethodSource& source ) {
+		if( !seen.insert( def->name ).second )
+		{
+			// Hidden by the method of that name found first
+			return false;
+		}
+		return !visitor( def, source.GetSignature( def ), context );
+	} );
+	return !stopped;
 }
 
 const BlueCMethodDef* BlueCFindFunction( const std::vector<BlueCMethodDef>& functions, const char* name, size_t nameLength )

@@ -1,7 +1,8 @@
 # Copyright (c) 2026 CCP Games
 #
 # BlueExposureCAbiTests: the test classes of tests/ called only through the C-ABI backend
-# (ClassInfo::mCMethodTable, VarEntry::mCGet/mCSet, attribute offsets and the C function list).
+# (ClassInfo::mCMethodTable, VarEntry::mCGet/mCSet, attribute offsets, the C function list and
+# interface methods registered with BLUE_REGISTER_CTHUNKER).
 
 find_package(GTest REQUIRED)
 include(GoogleTest)
@@ -24,6 +25,7 @@ add_executable(BlueExposureCAbiTests
     TestCAbiCallbacks.cpp
     TestCAbiFind.cpp
     TestCAbiCalls.cpp
+    TestCAbiInterfaceMethods.cpp
     TestCAbiMembers.cpp
     TestCAbiValues.cpp
     TestCAbiUtil.h

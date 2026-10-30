@@ -23,6 +23,17 @@ typedef FuncRegsVector TestRegsVector;
 #if BLUE_WITH_CABI
 // Module functions done with MAP_FUNCTION_AND_WRAP, as C thunks
 typedef std::vector<BlueCMethodDef> CFuncRegsVector;
+
+// C methods of an interface, done with BLUE_REGISTER_CTHUNKER: every object whose class (or a
+// parent) maps the interface answers to them, after the methods of its class chain
+struct BlueCThunkerRegistration
+{
+	const BlueCMethodDef* mMethods;							// ends with an entry whose name is null
+	const Be::BlueExposureFunctionSignature* mSignatures;	// one per method, or null
+	Be::IID mIID;
+};
+
+typedef std::vector<BlueCThunkerRegistration> CThunkerRegsVector;
 #endif
 
 typedef std::map<std::string, Be::BlueExposureFunctionSignature> FuncSignatures;
@@ -156,6 +167,13 @@ public:
 	// against Blue, all modules must share this vector. When linking statically
 	// it doesn't matter.
 	static ThunkerRegsVector& GetGlobalThunkerRegs();
+
+#if BLUE_WITH_CABI
+	// Interface C methods (BLUE_REGISTER_CTHUNKER), shared by all modules like
+	// GetGlobalThunkerRegs. Registrars add to it directly at static initialisation: the C ABI has
+	// no module init step that could copy a per-module list into it.
+	static BLUEIMPORT CThunkerRegsVector& GetGlobalCThunkerRegs();
+#endif
 };
 
 /////////////////
@@ -204,6 +222,28 @@ public:
 
 #define BLUE_REGISTER_THUNKER( def, iid ) \
 	static ThunkerRegistrar CCP_CONCATENATE( s_thunker_, __COUNTER__ )( def, iid )
+
+#if BLUE_WITH_CABI
+// The C-ABI twin of ThunkerRegistrar
+class CThunkerRegistrar
+{
+public:
+	CThunkerRegistrar( const BlueCMethodDef* methods, const Be::IID& iid, const Be::BlueExposureFunctionSignature* signatures = nullptr )
+	{
+		BlueCThunkerRegistration reg = { methods, signatures, iid };
+		BlueRegistration::GetGlobalCThunkerRegs().push_back( reg );
+	}
+};
+
+// Register a table of C methods (BlueCMethodDef, ending with a null name) for an interface. A
+// thunk gets the object as an IRoot* and casts it to the interface itself. The table, and the
+// signatures (one per method, for describing them), must live as long as the process.
+#define BLUE_REGISTER_CTHUNKER( methods, iid ) \
+	static CThunkerRegistrar CCP_CONCATENATE( s_cthunker_, __COUNTER__ )( methods, iid )
+
+#define BLUE_REGISTER_CTHUNKER_WITH_SIGNATURES( methods, signatures, iid ) \
+	static CThunkerRegistrar CCP_CONCATENATE( s_cthunker_, __COUNTER__ )( methods, iid, signatures )
+#endif
 
 /////////////////
 // Function registration

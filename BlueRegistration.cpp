@@ -101,3 +101,11 @@ ThunkerRegsVector& BlueRegistration::GetGlobalThunkerRegs()
 	static ThunkerRegsVector s_globalThunkerRegs;
 	return s_globalThunkerRegs;
 }
+
+#if BLUE_WITH_CABI
+CThunkerRegsVector& BlueRegistration::GetGlobalCThunkerRegs()
+{
+	static CThunkerRegsVector s_globalCThunkerRegs;
+	return s_globalCThunkerRegs;
+}
+#endif
