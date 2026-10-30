@@ -26,7 +26,9 @@
 //   Vector3i                           VECTOR 3 | INT32
 //   Matrix                             VECTOR 16 | FLOAT | MATRIX, components in u.arr
 //   pointer to a Blue class/interface  OBJECT (+1 on wrap, borrowed on extract), NONE for null
-//   BlueScriptCallback                 CALLBACK (+1 on wrap, blue's own reference on extract),
+//   BluePtr<T>, BlueBasicPtr<T>        as T* (the smart pointer holds its own reference on
+//                                      extract)
+//   BlueScriptCallback                CALLBACK (+1 on wrap, blue's own reference on extract),
 //                                      NONE for no callback; only with C-ABI as the only backend
 //   std::vector, std::list, std::pair  ARRAY
 //   std::map                           MAP
@@ -722,6 +724,35 @@ struct BlueCConvert< T, typename std::enable_if< is_pointer_to_blue<T>::type::va
 		return true;
 	}
 };
+
+// Smart pointer to a Blue class or interface (BluePtr<T>, BlueBasicPtr<T>, IRootPtr): converted
+// as T*, with the same cast and the same NONE for null. Extract stores the object in the smart
+// pointer, which holds a reference of its own until the argument storage goes away; wrap adds
+// one for the caller, as for T*.
+template< typename Pointer, typename T >
+struct BlueCConvertSmartPointer
+{
+	static const bool supported = true;
+
+	static bool Extract( const BlueCValue& value, Pointer& result, unsigned argIndex, BlueCError* err )
+	{
+		T* p = nullptr;
+		if( !BlueCConvert<T*>::Extract( value, p, argIndex, err ) )
+		{
+			return false;
+		}
+		result = p;
+		return true;
+	}
+
+	static bool Wrap( const Pointer& value, BlueCValue& out, BlueCError* err )
+	{
+		return BlueCConvert<T*>::Wrap( value.p, out, err );
+	}
+};
+
+template< typename T > struct BlueCConvert< BlueBasicPtr<T> > : BlueCConvertSmartPointer< BlueBasicPtr<T>, T > {};
+template< typename T > struct BlueCConvert< BluePtr<T> > : BlueCConvertSmartPointer< BluePtr<T>, T > {};
 
 
 //--------------------------------------------------------------------
