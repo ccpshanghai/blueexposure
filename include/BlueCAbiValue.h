@@ -31,6 +31,10 @@
 //   std::map                           MAP
 //   Be::Optional<T>                    as T (NONE when unassigned, on wrap)
 //
+// No C++ type maps to BYTES: binary data is wrapped and extracted explicitly with
+// BlueCWrapBytes / BlueCAllocateBytes / BlueCExtractBytes (hand-written thunks, such as the
+// IBlueStream methods). Extracting accepts only BYTES, and STRING only STRING.
+//
 // On extract a vector also accepts an ARRAY of numbers, and like the Python backend accepts
 // fewer components than the type has (the rest are zero). A matrix also accepts an ARRAY of 16
 // numbers or of four 4-component rows.
@@ -93,9 +97,9 @@ BLUEIMPORT std::string BlueCTypeName( const char* typeidName );
 // Free err's message and reset it to BLUE_OK
 BLUEIMPORT void BlueCErrorClear( BlueCError* err );
 
-// Free everything a value owns (strings, items, object references) and reset it to NONE.
+// Free everything a value owns (strings, bytes, items, object references) and reset it to NONE.
 // Only for values produced by blue (BlueCWrap, thunk outputs) or built with its allocation
-// helpers (BlueCValueSetString / Array / Map, as host callbacks return them).
+// helpers (BlueCValueSetString / Bytes / Array / Map, as host callbacks return them).
 BLUEIMPORT void BlueCValueRelease( BlueCValue* value );
 
 // Name of a BlueCValueKind, for messages
@@ -154,6 +158,18 @@ BLUEIMPORT void BlueCWrapUInt( uint64_t value, BlueCValue& out );
 BLUEIMPORT void BlueCWrapDouble( double value, BlueCValue& out );
 BLUEIMPORT bool BlueCWrapString( const char* value, size_t length, BlueCValue& out, BlueCError* err );
 BLUEIMPORT bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, BlueCError* err );
+
+// BYTES holding a copy of data[0, length) (data may be null when length is 0)
+BLUEIMPORT bool BlueCWrapBytes( const void* data, size_t length, BlueCValue& out, BlueCError* err );
+
+// BYTES of length uninitialised bytes, for the caller to fill; returns the buffer, or null (out
+// is then NONE, err filled). The caller may lower out.u.str.len afterwards (a short read), but
+// never raise it.
+BLUEIMPORT char* BlueCAllocateBytes( size_t length, BlueCValue& out, BlueCError* err );
+
+// The data of a BYTES value, borrowed from it (null when its length is 0 and it has no pointer).
+// Only BYTES is accepted; a STRING is a type error, as text is not binary data.
+BLUEIMPORT bool BlueCExtractBytes( const BlueCValue& value, const void*& data, size_t& length, unsigned argIndex, BlueCError* err );
 BLUEIMPORT void BlueCWrapComponents( const double* elements, uint32_t count, uint32_t elementAndTag, BlueCValue& out );
 BLUEIMPORT bool BlueCWrapMatrix( const float* elements16, BlueCValue& out, BlueCError* err );
 
@@ -207,6 +223,10 @@ BLUEIMPORT int32_t BlueCSetErrorMessage( BlueCError* err, int32_t code, const ch
 // then NONE): BLUE_E_INVALID_ARGUMENT for a null out, or a null utf8 with a length;
 // BLUE_E_OUT_OF_MEMORY.
 BLUEIMPORT int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, BlueCError* err );
+
+// BYTES holding a copy of data[0, length) (binary, not NUL-terminated by contract). Errors as
+// BlueCValueSetString, for a null data with a length too.
+BLUEIMPORT int32_t BlueCValueSetBytes( BlueCValue* out, const void* data, size_t length, BlueCError* err );
 
 // ARRAY of count NONE items, for the caller to fill in place. Errors as BlueCValueSetString.
 BLUEIMPORT int32_t BlueCValueSetArray( BlueCValue* out, size_t count, BlueCError* err );

@@ -18,6 +18,7 @@
  *     into the host below). Blue never frees memory the host allocated.
  *   - Strings are UTF-8 with an explicit length. Strings blue produces are additionally
  *     NUL-terminated; strings passed in need not be.
+ *   - Bytes (BLUE_VK_BYTES) are binary data with an explicit length and no terminator.
  */
 
 #pragma once
@@ -80,7 +81,8 @@ typedef enum BlueCValueKind
 	BLUE_VK_VECTOR = 7,		/* aux describes it; u.vec for up to 4 components, u.arr otherwise */
 	BLUE_VK_ARRAY = 8,		/* u.arr: std::vector, std::list, std::pair */
 	BLUE_VK_MAP = 9,		/* u.map: std::map */
-	BLUE_VK_CALLBACK = 10	/* u.callback, never null (a null callback is BLUE_VK_NONE) */
+	BLUE_VK_CALLBACK = 10,	/* u.callback, never null (a null callback is BLUE_VK_NONE) */
+	BLUE_VK_BYTES = 11		/* u.str, binary data (any bytes, not NUL-terminated) */
 } BlueCValueKind;
 
 /* aux of a BLUE_VK_VECTOR: component count | element type | tag. Components are always stored
@@ -113,7 +115,7 @@ struct BlueCValue
 		{
 			const char* ptr;
 			size_t len;
-		} str;
+		} str;					/* BLUE_VK_STRING and BLUE_VK_BYTES */
 		BlueObject* obj;
 		BlueCallbackHandle* callback;
 		struct
@@ -181,9 +183,9 @@ typedef struct BlueCMethodDef
  * Returning a value: fn writes it to out, and gives it to blue. Blue converts what it needs and
  * then frees the value with BlueCValueRelease - also when the call failed, or the value has the
  * wrong kind - so everything in it must be freeable by blue:
- *   - strings, arrays and maps are allocated with blue's helpers (BlueCValueSetString,
- *     BlueCValueSetArray, BlueCValueSetMap; the Blue C API re-exports them), never with the
- *     host's allocator. Items of an array or map are filled in place, the same way;
+ *   - strings, bytes, arrays and maps are allocated with blue's helpers (BlueCValueSetString,
+ *     BlueCValueSetBytes, BlueCValueSetArray, BlueCValueSetMap; the Blue C API re-exports them),
+ *     never with the host's allocator. Items of an array or map are filled in place, the same way;
  *   - an object carries one reference that blue takes over (add one first to keep your own);
  *   - a callback handle likewise carries one reference (BlueCCallbackCreate, or an added one);
  *   - a matrix is returned as an ARRAY of 16 numbers (u.vec holds at most four components).

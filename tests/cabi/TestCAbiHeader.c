@@ -7,6 +7,10 @@
 
 #include <stddef.h>
 
+/* The kinds are part of the layout: hosts mirror them */
+BLUE_CABI_STATIC_ASSERT( BLUE_VK_CALLBACK == 10, "BLUE_VK_CALLBACK value" );
+BLUE_CABI_STATIC_ASSERT( BLUE_VK_BYTES == 11, "BLUE_VK_BYTES value" );
+
 enum
 {
 	LAYOUT_VALUE_SIZE,

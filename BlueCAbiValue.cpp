@@ -160,6 +160,8 @@ const char* BlueCKindName( uint32_t kind )
 		return "map";
 	case BLUE_VK_CALLBACK:
 		return "callback";
+	case BLUE_VK_BYTES:
+		return "bytes";
 	default:
 		return "invalid kind";
 	}
@@ -251,6 +253,20 @@ int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, B
 	return BlueCWrapString( utf8, length, *out, err ) ? int32_t( BLUE_OK ) : int32_t( BLUE_E_OUT_OF_MEMORY );
 }
 
+int32_t BlueCValueSetBytes( BlueCValue* out, const void* data, size_t length, BlueCError* err )
+{
+	if( !out )
+	{
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null value" );
+	}
+	if( !data && length )
+	{
+		BlueCValueSetNone( *out );
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null data of %zu bytes", length );
+	}
+	return BlueCWrapBytes( data, length, *out, err ) ? int32_t( BLUE_OK ) : int32_t( BLUE_E_OUT_OF_MEMORY );
+}
+
 // out as an ARRAY / MAP over itemCount freshly allocated NONE values (a MAP's are key, value, ...)
 static int32_t BlueCValueSetItems( BlueCValue* out, uint32_t kind, size_t itemCount, BlueCError* err )
 {
@@ -323,6 +339,7 @@ void BlueCValueRelease( BlueCValue* value )
 	switch( value->kind )
 	{
 	case BLUE_VK_STRING:
+	case BLUE_VK_BYTES:
 		if( value->u.str.ptr )
 		{
 			CCP_FREE( const_cast<char*>( value->u.str.ptr ) );
@@ -825,24 +842,41 @@ bool BlueCExtractSharedString( const BlueCValue& value, BlueSharedStringW& resul
 	return true;
 }
 
-bool BlueCWrapString( const char* value, size_t length, BlueCValue& out, BlueCError* err )
+// out as a STRING or BYTES owning a buffer of length + 1 bytes, the last one NUL (bytes share
+// the string storage). Returns the buffer, or null with out NONE and err filled.
+static char* BlueCAllocateStringStorage( uint32_t kind, size_t length, BlueCValue& out, BlueCError* err )
 {
 	BlueCValueSetNone( out );
-	char* copy = static_cast<char*>( CCP_MALLOC( "BlueCValue/string", length + 1 ) );
-	if( !copy )
+	char* buffer = length < std::numeric_limits<size_t>::max() ? static_cast<char*>( CCP_MALLOC( "BlueCValue/string", length + 1 ) ) : nullptr;
+	if( !buffer )
 	{
-		BlueCSetError( err, BLUE_E_OUT_OF_MEMORY, "out of memory copying a string of %zu bytes", length );
+		BlueCSetError( err, BLUE_E_OUT_OF_MEMORY, "out of memory copying %s of %zu bytes", kind == BLUE_VK_BYTES ? "bytes" : "a string", length );
+		return nullptr;
+	}
+	buffer[length] = 0;
+	out.kind = kind;
+	out.u.str.ptr = buffer;
+	out.u.str.len = length;
+	return buffer;
+}
+
+static bool BlueCCopyStringStorage( uint32_t kind, const char* data, size_t length, BlueCValue& out, BlueCError* err )
+{
+	char* buffer = BlueCAllocateStringStorage( kind, length, out, err );
+	if( !buffer )
+	{
 		return false;
 	}
 	if( length )
 	{
-		memcpy( copy, value, length );
+		memcpy( buffer, data, length );
 	}
-	copy[length] = 0;
-	out.kind = BLUE_VK_STRING;
-	out.u.str.ptr = copy;
-	out.u.str.len = length;
 	return true;
+}
+
+bool BlueCWrapString( const char* value, size_t length, BlueCValue& out, BlueCError* err )
+{
+	return BlueCCopyStringStorage( BLUE_VK_STRING, value, length, out, err );
 }
 
 bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, BlueCError* err )
@@ -855,6 +889,43 @@ bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, Blu
 		return false;
 	}
 	return BlueCWrapString( utf8.data(), utf8.size(), out, err );
+}
+
+
+//--------------------------------------------------------------------
+// Bytes
+//--------------------------------------------------------------------
+
+bool BlueCWrapBytes( const void* data, size_t length, BlueCValue& out, BlueCError* err )
+{
+	if( !data && length )
+	{
+		BlueCValueSetNone( out );
+		BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null data of %zu bytes", length );
+		return false;
+	}
+	return BlueCCopyStringStorage( BLUE_VK_BYTES, static_cast<const char*>( data ), length, out, err );
+}
+
+char* BlueCAllocateBytes( size_t length, BlueCValue& out, BlueCError* err )
+{
+	return BlueCAllocateStringStorage( BLUE_VK_BYTES, length, out, err );
+}
+
+bool BlueCExtractBytes( const BlueCValue& value, const void*& data, size_t& length, unsigned argIndex, BlueCError* err )
+{
+	if( value.kind != BLUE_VK_BYTES )
+	{
+		return BlueCTypeMismatch( err, argIndex, "bytes", value );
+	}
+	if( !value.u.str.ptr && value.u.str.len )
+	{
+		BlueCSetArgumentError( err, BLUE_E_INVALID_ARGUMENT, argIndex, "bytes with a null pointer and length %zu", value.u.str.len );
+		return false;
+	}
+	data = value.u.str.ptr;
+	length = value.u.str.len;
+	return true;
 }
 
 

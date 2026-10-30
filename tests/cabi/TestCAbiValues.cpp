@@ -651,5 +651,130 @@ TEST( CAbiConvert, KindNames )
 {
 	EXPECT_STREQ( BlueCKindName( BLUE_VK_MAP ), "map" );
 	EXPECT_STREQ( BlueCKindName( BLUE_VK_CALLBACK ), "callback" );
+	EXPECT_STREQ( BlueCKindName( BLUE_VK_BYTES ), "bytes" );
 	EXPECT_STREQ( BlueCKindName( 99 ), "invalid kind" );
+}
+
+
+//--------------------------------------------------------------------
+// Bytes
+//--------------------------------------------------------------------
+
+TEST( CAbiBytes, WrapAndExtract )
+{
+	// Any byte, NUL and invalid UTF-8 included
+	const unsigned char data[] = { 0x00, 0xFF, 'a', 0xC0, 0x00, 0x80 };
+
+	BlueCValueHolder holder;
+	BlueCError err = { BLUE_OK, nullptr, 0 };
+	ASSERT_TRUE( BlueCWrapBytes( data, sizeof( data ), holder.Get(), &err ) );
+	const BlueCValue& v = holder.Get();
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_BYTES ) );
+	EXPECT_EQ( v.aux, 0u );
+	ASSERT_EQ( v.u.str.len, sizeof( data ) );
+	EXPECT_NE( static_cast<const void*>( v.u.str.ptr ), static_cast<const void*>( data ) ) << "wrapping copies";
+	EXPECT_EQ( memcmp( v.u.str.ptr, data, sizeof( data ) ), 0 );
+
+	// Extract borrows the value's buffer
+	const void* back = nullptr;
+	size_t length = 0;
+	ASSERT_TRUE( BlueCExtractBytes( v, back, length, 0, &err ) );
+	EXPECT_EQ( back, static_cast<const void*>( v.u.str.ptr ) );
+	EXPECT_EQ( length, sizeof( data ) );
+
+	// Empty, with and without data
+	BlueCValueHolder empty, emptyNull;
+	ASSERT_TRUE( BlueCWrapBytes( data, 0, empty.Get(), &err ) );
+	EXPECT_EQ( empty.Get().kind, uint32_t( BLUE_VK_BYTES ) );
+	EXPECT_EQ( empty.Get().u.str.len, size_t( 0 ) );
+	ASSERT_TRUE( BlueCWrapBytes( nullptr, 0, emptyNull.Get(), &err ) );
+	EXPECT_EQ( emptyNull.Get().kind, uint32_t( BLUE_VK_BYTES ) );
+	ASSERT_TRUE( BlueCExtractBytes( Bytes( nullptr, 0 ), back, length, 0, &err ) );
+	EXPECT_EQ( back, nullptr );
+	EXPECT_EQ( length, size_t( 0 ) );
+	EXPECT_EQ( err.code, int32_t( BLUE_OK ) );
+
+	// Null data with a length
+	BlueCValueHolder nullData;
+	EXPECT_FALSE( BlueCWrapBytes( nullptr, 3, nullData.Get(), &err ) );
+	EXPECT_EQ( err.code, int32_t( BLUE_E_INVALID_ARGUMENT ) );
+	EXPECT_EQ( nullData.Get().kind, uint32_t( BLUE_VK_NONE ) );
+	EXPECT_FALSE( BlueCExtractBytes( Bytes( nullptr, 3 ), back, length, 0, &err ) );
+	EXPECT_EQ( err.code, int32_t( BLUE_E_INVALID_ARGUMENT ) );
+	BlueCErrorClear( &err );
+}
+
+TEST( CAbiBytes, StrictKinds )
+{
+	// Bytes are not text and text is not bytes, either way round
+	const char text[] = "abc";
+	const void* data = nullptr;
+	size_t length = 0;
+	std::string s;
+	std::wstring w;
+
+	Result fromString, fromNone, toString, toWString;
+	EXPECT_FALSE( BlueCExtractBytes( Str( text ), data, length, 1, &fromString.err ) );
+	EXPECT_EQ( fromString.err.code, int32_t( BLUE_E_TYPE ) );
+	EXPECT_EQ( fromString.Message(), "argument 1: expected bytes, got string" );
+	EXPECT_FALSE( BlueCExtractBytes( None(), data, length, 0, &fromNone.err ) );
+	EXPECT_EQ( fromNone.err.code, int32_t( BLUE_E_TYPE ) );
+	EXPECT_FALSE( BlueCExtractString( Bytes( text, 3 ), s, 0, &toString.err ) );
+	EXPECT_EQ( toString.err.code, int32_t( BLUE_E_TYPE ) );
+	EXPECT_FALSE( BlueCExtractWString( Bytes( text, 3 ), w, 0, &toWString.err ) );
+	EXPECT_EQ( toWString.err.code, int32_t( BLUE_E_TYPE ) );
+}
+
+TEST_F( CAbiValues, BytesAreNotAStringArgument )
+{
+	const char text[] = "abc";
+	Result r;
+	Call( r, Methods(), "MethodReturningString", { Bytes( text, 3 ) } );
+	EXPECT_CABI_ERROR( r, BLUE_E_TYPE );
+}
+
+TEST( CAbiBytes, Allocate )
+{
+	// Fill in place, then report a short read by lowering the length
+	BlueCValue v;
+	BlueCError err = { BLUE_OK, nullptr, 0 };
+	char* buffer = BlueCAllocateBytes( 8, v, &err );
+	ASSERT_NE( buffer, nullptr );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_BYTES ) );
+	EXPECT_EQ( static_cast<const char*>( buffer ), v.u.str.ptr );
+	EXPECT_EQ( v.u.str.len, size_t( 8 ) );
+	memcpy( buffer, "\x01\x02\x03", 3 );
+	v.u.str.len = 3;
+
+	const void* data = nullptr;
+	size_t length = 0;
+	ASSERT_TRUE( BlueCExtractBytes( v, data, length, 0, &err ) );
+	EXPECT_EQ( length, size_t( 3 ) );
+	EXPECT_EQ( memcmp( data, "\x01\x02\x03", 3 ), 0 );
+	BlueCValueRelease( &v );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_NONE ) );
+
+	// Zero bytes still allocate (so a buffer pointer is always returned)
+	ASSERT_NE( BlueCAllocateBytes( 0, v, &err ), nullptr );
+	EXPECT_EQ( v.u.str.len, size_t( 0 ) );
+	BlueCValueRelease( &v );
+
+	// An impossible size fails cleanly
+	EXPECT_EQ( BlueCAllocateBytes( std::numeric_limits<size_t>::max(), v, &err ), nullptr );
+	EXPECT_EQ( err.code, int32_t( BLUE_E_OUT_OF_MEMORY ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_NONE ) );
+	BlueCErrorClear( &err );
+}
+
+TEST( CAbiBytes, InsideContainersAreReleased )
+{
+	// An array holding bytes: BlueCValueRelease frees them with the array
+	BlueCValue v;
+	BlueCValueSetNone( v );
+	ASSERT_EQ( BlueCValueSetArray( &v, 2, nullptr ), int32_t( BLUE_OK ) );
+	ASSERT_EQ( BlueCValueSetBytes( &v.u.arr.items[0], "\x00\xFF", 2, nullptr ), int32_t( BLUE_OK ) );
+	ASSERT_EQ( BlueCValueSetString( &v.u.arr.items[1], "x", 1, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.u.arr.items[0].kind, uint32_t( BLUE_VK_BYTES ) );
+	BlueCValueRelease( &v );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_NONE ) );
 }

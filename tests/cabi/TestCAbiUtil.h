@@ -85,6 +85,16 @@ inline BlueCValue Str( const std::string& s )
 	return Str( s.data(), s.size() );
 }
 
+// data must outlive the value
+inline BlueCValue Bytes( const void* data, size_t length )
+{
+	BlueCValue v = None();
+	v.kind = BLUE_VK_BYTES;
+	v.u.str.ptr = static_cast<const char*>( data );
+	v.u.str.len = length;
+	return v;
+}
+
 inline BlueCValue Vec( std::initializer_list<double> components, uint32_t elementAndTag = BLUE_VEC_ELEMENT_FLOAT )
 {
 	BlueCValue v = None();

@@ -468,6 +468,30 @@ TEST( CAbiValueBuilders, StringArrayMap )
 	BlueCValueRelease( &v );
 }
 
+TEST( CAbiValueBuilders, Bytes )
+{
+	BlueCValue v;
+	BlueCValueSetNone( v );
+
+	const char data[] = { 'a', '\0', '\xFF' };
+	EXPECT_EQ( BlueCValueSetBytes( &v, data, sizeof( data ), nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_BYTES ) );
+	ASSERT_EQ( v.u.str.len, sizeof( data ) );
+	EXPECT_EQ( memcmp( v.u.str.ptr, data, sizeof( data ) ), 0 );
+	BlueCValueRelease( &v );
+
+	EXPECT_EQ( BlueCValueSetBytes( &v, nullptr, 0, nullptr ), int32_t( BLUE_OK ) );
+	EXPECT_EQ( v.kind, uint32_t( BLUE_VK_BYTES ) );
+	EXPECT_EQ( v.u.str.len, size_t( 0 ) );
+	BlueCValueRelease( &v );
+
+	Result nullOut, nullData;
+	nullOut.status = BlueCValueSetBytes( nullptr, data, 1, &nullOut.err );
+	EXPECT_EQ( nullOut.status, int32_t( BLUE_E_INVALID_ARGUMENT ) );
+	nullData.status = BlueCValueSetBytes( &nullData.out, nullptr, 4, &nullData.err );
+	EXPECT_CABI_ERROR( nullData, BLUE_E_INVALID_ARGUMENT );
+}
+
 TEST( CAbiValueBuilders, Errors )
 {
 	Result nullOut, nullString, tooMany;
