@@ -14,6 +14,9 @@
 #include "BlueScriptValue.h"
 #if BLUE_WITH_CABI
 #include "BlueCAbi.h"
+
+// A method's or function's C-ABI signature (BlueExposureHelpersCAbi.h)
+struct BlueCSignature;
 #endif
 
 #if !BLUE_WITH_PYTHON
@@ -345,6 +348,9 @@ namespace Be
 		// properties, C-ABI backend (null for attributes)
 		BlueCGetFn			mCGet;
 		BlueCSetFn			mCSet;
+		// properties: the getter's type name (BlueCAbiTypeName.h); null for attributes, whose
+		// name BlueCMemberTypeName derives from mType, mSize and mIID
+		const char*			mCTypeName;
 #endif
 
 		size_t GetFloatArraySize() const
@@ -414,6 +420,8 @@ namespace Be
 #if BLUE_WITH_CABI
 		// Methods of this class only (parents have their own), ending with a null name
 		const BlueCMethodDef*	mCMethodTable;
+		// Their C signatures, at the same index as in mCMethodTable
+		const BlueCSignature*	mCSignatures;
 #endif
 	};
 

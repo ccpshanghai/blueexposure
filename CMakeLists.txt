@@ -68,6 +68,7 @@ endif()
 if(BLUE_WITH_CABI)
     target_sources(BlueExposure PRIVATE
         BlueCAbi.cpp
+        BlueCAbiTypeName.cpp
         BlueCAbiValue.cpp
     )
 endif()
@@ -75,6 +76,7 @@ endif()
 set(PUBLIC_HEADER_FILES
     include/BlueCAbi.h
     include/BlueCAbiCall.h
+    include/BlueCAbiTypeName.h
     include/BlueCAbiValue.h
     include/BlueCallFunction.h
     include/BlueCallFunctionHelpers.h

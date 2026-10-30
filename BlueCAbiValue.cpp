@@ -98,7 +98,7 @@ bool BlueCTypeMismatch( BlueCError* err, unsigned argIndex, const char* expected
 	return false;
 }
 
-std::string BlueCTypeName( const char* typeidName )
+std::string BlueCDemangle( const char* typeidName )
 {
 #if defined( __GNUC__ ) || defined( __clang__ )
 	int status = 0;
@@ -115,7 +115,7 @@ std::string BlueCTypeName( const char* typeidName )
 
 bool BlueCUnsupportedType( BlueCError* err, unsigned argIndex, const char* typeName )
 {
-	BlueCSetArgumentError( err, BLUE_E_UNSUPPORTED, argIndex, "type %s has no C-ABI conversion", BlueCTypeName( typeName ).c_str() );
+	BlueCSetArgumentError( err, BLUE_E_UNSUPPORTED, argIndex, "type %s has no C-ABI conversion", BlueCDemangle( typeName ).c_str() );
 	return false;
 }
 

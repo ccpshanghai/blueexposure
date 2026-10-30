@@ -24,12 +24,15 @@ typedef FuncRegsVector TestRegsVector;
 // Module functions done with MAP_FUNCTION_AND_WRAP, as C thunks
 typedef std::vector<BlueCMethodDef> CFuncRegsVector;
 
+// C signatures of the module functions done with MAP_FUNCTION_AND_WRAP, by name
+typedef std::map<std::string, BlueCSignature> CFuncSignatures;
+
 // C methods of an interface, done with BLUE_REGISTER_CTHUNKER: every object whose class (or a
 // parent) maps the interface answers to them, after the methods of its class chain
 struct BlueCThunkerRegistration
 {
-	const BlueCMethodDef* mMethods;							// ends with an entry whose name is null
-	const Be::BlueExposureFunctionSignature* mSignatures;	// one per method, or null
+	const BlueCMethodDef* mMethods;			// ends with an entry whose name is null
+	const BlueCSignature* mSignatures;		// one per method, or null
 	Be::IID mIID;
 };
 
@@ -138,6 +141,15 @@ public:
 		return s_funcSignatures;
 	}
 
+#if BLUE_WITH_CABI
+	// The C-ABI twin of GetFuncSignatures, for the functions in GetCFuncRegs
+	static CFuncSignatures& GetCFuncSignatures()
+	{
+		static CFuncSignatures s_cfuncSignatures;
+		return s_cfuncSignatures;
+	}
+#endif
+
 	static EnumRegsMap& GetEnumRegs()
 	{
 		static EnumRegsMap s_enumRegs;
@@ -228,7 +240,7 @@ public:
 class CThunkerRegistrar
 {
 public:
-	CThunkerRegistrar( const BlueCMethodDef* methods, const Be::IID& iid, const Be::BlueExposureFunctionSignature* signatures = nullptr )
+	CThunkerRegistrar( const BlueCMethodDef* methods, const Be::IID& iid, const BlueCSignature* signatures = nullptr )
 	{
 		BlueCThunkerRegistration reg = { methods, signatures, iid };
 		BlueRegistration::GetGlobalCThunkerRegs().push_back( reg );
@@ -237,7 +249,8 @@ public:
 
 // Register a table of C methods (BlueCMethodDef, ending with a null name) for an interface. A
 // thunk gets the object as an IRoot* and casts it to the interface itself. The table, and the
-// signatures (one per method, for describing them), must live as long as the process.
+// signatures (BlueCSignature, one per method in the same order, for describing them; type names
+// as in BlueCAbiTypeName.h), must live as long as the process.
 #define BLUE_REGISTER_CTHUNKER( methods, iid ) \
 	static CThunkerRegistrar CCP_CONCATENATE( s_cthunker_, __COUNTER__ )( methods, iid )
 
@@ -277,14 +290,15 @@ public:
 };
 
 #if BLUE_WITH_CABI
-// Registers a C thunk for a module function (MAP_FUNCTION_AND_WRAP)
+// Registers a C thunk for a module function (MAP_FUNCTION_AND_WRAP), and its C signature
 class CFunctionRegistrar
 {
 public:
-	CFunctionRegistrar( const char* expname, BlueCMethodFn func, const char* docstring )
+	CFunctionRegistrar( const char* expname, BlueCMethodFn func, const char* docstring, const BlueCSignature& signature )
 	{
 		BlueCMethodDef md = { expname, func, docstring, 0 };
 		BlueRegistration::GetCFuncRegs().push_back( md );
+		BlueRegistration::GetCFuncSignatures()[expname] = signature;
 	}
 };
 #endif

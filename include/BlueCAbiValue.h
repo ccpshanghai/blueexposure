@@ -6,7 +6,8 @@
 //   BlueCWrap( const T&, BlueCValue&, BlueCError* )                 C++ -> value (owned output)
 //
 // Both forward to BlueCConvert<T>, which is specialised per type; a module adds a C++ type by
-// specialising BlueCConvert. A type without a specialisation still compiles, so every exposed
+// specialising BlueCConvert, and BlueCTypeName (BlueCAbiTypeName.h) to name it in signatures and
+// metadata. A type without a specialisation still compiles, so every exposed
 // method gets a thunk, but converting it fails at run time with BLUE_E_UNSUPPORTED (PyObject*,
 // for example). Conversions never throw on bad input: a kind or range mismatch fills the
 // BlueCError and returns false.
@@ -95,7 +96,7 @@ BLUEIMPORT bool BlueCTypeMismatch( BlueCError* err, unsigned argIndex, const cha
 BLUEIMPORT bool BlueCUnsupportedType( BlueCError* err, unsigned argIndex, const char* typeName );
 
 // Readable form of a typeid name, for messages
-BLUEIMPORT std::string BlueCTypeName( const char* typeidName );
+BLUEIMPORT std::string BlueCDemangle( const char* typeidName );
 
 // Free err's message and reset it to BLUE_OK
 BLUEIMPORT void BlueCErrorClear( BlueCError* err );
@@ -711,7 +712,7 @@ struct BlueCConvert< T, typename std::enable_if< is_pointer_to_blue<T>::type::va
 		if( !p )
 		{
 			BlueCSetArgumentError( err, BLUE_E_TYPE, argIndex, "object of class %s is not a %s",
-								   BlueCClassNameOf( obj ), BlueCTypeName( typeid( Pointee ).name() ).c_str() );
+								   BlueCClassNameOf( obj ), BlueCDemangle( typeid( Pointee ).name() ).c_str() );
 			return false;
 		}
 		result = p;

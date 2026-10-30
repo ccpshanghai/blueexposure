@@ -53,21 +53,20 @@ static bool BlueCNameEquals( const char* candidate, const char* name, size_t nam
 	return candidate && strnlen( candidate, nameLength + 1 ) == nameLength && memcmp( candidate, name, nameLength ) == 0;
 }
 
-// Where a method came from, for its signature: a class's own table (the signature is in the
-// class's mFunctionSignatures, looked up only on demand) or an interface's registration
+// Where a method came from, for its signature: a class's own table (the signature is at the
+// same index in the class's mCSignatures) or an interface's registration
 struct BlueCMethodSource
 {
 	const Be::ClassInfo* owner;
-	const Be::BlueExposureFunctionSignature* signature;
+	const BlueCSignature* signature;
 
-	const Be::BlueExposureFunctionSignature* GetSignature( const BlueCMethodDef* def ) const
+	const BlueCSignature* GetSignature( const BlueCMethodDef* def ) const
 	{
-		if( !owner || !owner->mFunctionSignatures )
+		if( !owner )
 		{
 			return signature;
 		}
-		auto found = owner->mFunctionSignatures->find( def->name );
-		return found != owner->mFunctionSignatures->end() ? &found->second : nullptr;
+		return owner->mCSignatures ? &owner->mCSignatures[def - owner->mCMethodTable] : nullptr;
 	}
 };
 
@@ -371,6 +370,163 @@ static int32_t BlueCGetAttribute( IRoot* obj, const Be::VarEntry* entry, ptrdiff
 	}
 
 	return ok ? int32_t( BLUE_OK ) : err.code;
+}
+
+// Name of a VARTYPE, for the unknown type names of attributes the C ABI cannot read
+static const char* BlueCVarTypeName( Be::VARTYPE type )
+{
+	switch( type )
+	{
+	case Be::INVALID: return "INVALID";
+	case Be::LONG: return "LONG";
+	case Be::FLOAT: return "FLOAT";
+	case Be::DOUBLE: return "DOUBLE";
+	case Be::BOOL: return "BOOL";
+	case Be::IROOT: return "IROOT";
+	case Be::IROOTPTR: return "IROOTPTR";
+	case Be::CHARARRAY: return "CHARARRAY";
+	case Be::CSTRING: return "CSTRING";
+	case Be::INT64: return "INT64";
+	case Be::PYOBJECT: return "PYOBJECT";
+	case Be::PYOBJECTPTR: return "PYOBJECTPTR";
+	case Be::REFERENCE: return "REFERENCE";
+	case Be::WCSTRING: return "WCSTRING";
+	case Be::WREFERENCE: return "WREFERENCE";
+	case Be::FLOATARRAY: return "FLOATARRAY";
+	case Be::DOUBLEARRAY: return "DOUBLEARRAY";
+	case Be::INTARRAY: return "INTARRAY";
+	case Be::ROTREFERENCE: return "ROTREFERENCE";
+	case Be::IROOTWEAKREF: return "IROOTWEAKREF";
+	case Be::_PYPROPERTY: return "_PYPROPERTY";
+	case Be::STDSTRING: return "STDSTRING";
+	case Be::STDWSTRING: return "STDWSTRING";
+	case Be::BINARYBLOCK: return "BINARYBLOCK";
+	case Be::BYTE: return "BYTE";
+	case Be::SHORT: return "SHORT";
+	case Be::SCRIPTCALLBACK: return "SCRIPTCALLBACK";
+	case Be::SHAREDSTRING: return "SHAREDSTRING";
+	case Be::SHAREDSTRINGW: return "SHAREDSTRINGW";
+	case Be::ULONG: return "ULONG";
+	case Be::UINT64: return "UINT64";
+	default: return nullptr;
+	}
+}
+
+static const char* BlueCUnknownVarTypeName( const Be::VarEntry& entry, size_t count = 0 )
+{
+	std::string result = BLUE_CABI_UNKNOWN_TYPE_PREFIX;
+	if( const char* name = BlueCVarTypeName( entry.mType ) )
+	{
+		result += name;
+	}
+	else
+	{
+		result += "VARTYPE" + std::to_string( int( entry.mType ) );
+	}
+	if( count )
+	{
+		result += "[" + std::to_string( count ) + "]";
+	}
+	return BlueCInternTypeName( result );
+}
+
+// The name of an array attribute as BlueCWrapNumberArray wraps it: a vector of 2 to 4 components
+// (by element type, and for 4 floats by the IID's tag), a matrix, or else a list of numbers. One
+// component, and 2 or 4 ints, are vectors with no name.
+template< typename Element >
+static const char* BlueCNumberArrayTypeName( const Be::VarEntry& entry, size_t count, uint32_t tag )
+{
+	static const char* const s_vectors[3][3] = {
+		{ "vector2", "vector3", "vector4" },
+		{ "vector2d", "vector3d", "vector4d" },
+		{ nullptr, "vector3i", nullptr },
+	};
+	const size_t row = std::is_same<Element, float>::value ? 0 : std::is_same<Element, double>::value ? 1 : 2;
+
+	if( count >= 2 && count <= 4 )
+	{
+		if( row == 0 && count == 4 && tag == BLUE_VEC_TAG_COLOR )
+		{
+			return "color";
+		}
+		if( row == 0 && count == 4 && tag == BLUE_VEC_TAG_QUATERNION )
+		{
+			return "quaternion";
+		}
+		const char* name = s_vectors[row][count - 2];
+		return name ? name : BlueCUnknownVarTypeName( entry, count );
+	}
+	if( BlueCIsMatrix<Element>( count, tag ) )
+	{
+		return "matrix";
+	}
+	if( count > 4 )
+	{
+		return BlueCTypeName< std::vector<Element> >::Get();
+	}
+	return BlueCUnknownVarTypeName( entry, count );
+}
+
+const char* BlueCMemberTypeName( const Be::VarEntry& entry )
+{
+	if( entry.mCTypeName )
+	{
+		return entry.mCTypeName;
+	}
+	if( entry.mCGet || entry.mGetProperty )
+	{
+		// A property without a C getter
+		return BlueCUnknownVarTypeName( entry );
+	}
+
+	// As BlueCGetAttribute wraps each VARTYPE
+	switch( entry.mType )
+	{
+	case Be::LONG:
+		return entry.mSize == 1 ? "int8" : entry.mSize == 2 ? "int16" : "int32";
+	case Be::ULONG:
+		return "uint32";
+	case Be::SHORT:
+		// short and unsigned short share this VARTYPE and are read as unsigned
+		return "uint16";
+	case Be::BYTE:
+		// char and unsigned char share this VARTYPE and are read as unsigned
+		return "uint8";
+	case Be::INT64:
+		return "int64";
+	case Be::UINT64:
+		return "uint64";
+	case Be::BOOL:
+		return "bool";
+	case Be::FLOAT:
+		return "float";
+	case Be::DOUBLE:
+		return "double";
+	case Be::STDSTRING:
+	case Be::STDWSTRING:
+	case Be::SHAREDSTRING:
+	case Be::SHAREDSTRINGW:
+	case Be::CSTRING:
+	case Be::WCSTRING:
+	case Be::CHARARRAY:
+		return "string";
+	case Be::FLOATARRAY:
+		return BlueCNumberArrayTypeName<float>( entry, entry.GetFloatArraySize(), BlueCVectorTag( &entry ) );
+	case Be::DOUBLEARRAY:
+		return BlueCNumberArrayTypeName<double>( entry, entry.GetDoubleArraySize(), BlueCVectorTag( &entry ) );
+	case Be::INTARRAY:
+		return BlueCNumberArrayTypeName<int>( entry, entry.GetIntArraySize(), BLUE_VEC_TAG_NONE );
+	case Be::IROOT:
+	case Be::IROOTPTR:
+	case Be::IROOTWEAKREF:
+		return BlueCObjectTypeName( entry.mIID );
+#if BLUE_CABI_CALLBACKS
+	case Be::SCRIPTCALLBACK:
+		return "callback";
+#endif
+	default:
+		return BlueCUnknownVarTypeName( entry );
+	}
 }
 
 template< typename T >

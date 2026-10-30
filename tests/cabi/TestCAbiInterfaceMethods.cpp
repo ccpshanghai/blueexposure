@@ -69,9 +69,12 @@ const BlueCMethodDef s_testMethodsThunks[] = {
 	{ nullptr, nullptr, nullptr, 0 },
 };
 
-const Be::BlueExposureFunctionSignature s_testMethodsSignatures[] = {
-	{ "str", {}, 0, 0 },
-	{ "str", {}, 0, 0 },
+// C signatures, in BlueCAbiTypeName.h's names; hand-written ones may name types no C++ type has
+const char* const s_bytesArgs[] = { "bytes", "int64" };
+
+const BlueCSignature s_testMethodsSignatures[] = {
+	{ "string", nullptr, 0, 0 },
+	{ "bytes", s_bytesArgs, 2, 1 },
 };
 
 const BlueCMethodDef s_interfaceOneThunks[] = {
@@ -198,11 +201,11 @@ struct Visited
 {
 	std::vector<std::string> names;
 	std::map<std::string, const BlueCMethodDef*> methods;
-	std::map<std::string, const Be::BlueExposureFunctionSignature*> signatures;
+	std::map<std::string, const BlueCSignature*> signatures;
 	size_t stopAfter = 0;
 };
 
-static bool Visit( const BlueCMethodDef* method, const Be::BlueExposureFunctionSignature* signature, void* context )
+static bool Visit( const BlueCMethodDef* method, const BlueCSignature* signature, void* context )
 {
 	Visited& visited = *static_cast<Visited*>( context );
 	visited.names.push_back( method->name );
@@ -259,16 +262,22 @@ TEST( CAbiInterfaceMethods, ForEachSignatures )
 	ASSERT_TRUE( methods.CreateInstance() );
 	ASSERT_TRUE( interfaces.CreateInstance() );
 
-	// Class methods: the signature MAP_METHOD_AND_WRAP recorded
+	// Class methods: the C signature MAP_METHOD_AND_WRAP recorded, at the method's index
 	Visited visited;
 	EXPECT_TRUE( BlueCForEachMethod( methods->ClassType(), &Visit, &visited ) );
-	const Be::BlueExposureFunctionSignature* intArity3 = visited.signatures["IntArity3"];
+	const BlueCSignature* intArity3 = visited.signatures["IntArity3"];
 	ASSERT_NE( intArity3, nullptr );
-	EXPECT_EQ( intArity3->argumentCount, 3u );
-	EXPECT_EQ( intArity3, &( *methods->ClassType()->mFunctionSignatures )["IntArity3"] );
+	EXPECT_EQ( intArity3->argCount, 3u );
+	EXPECT_STREQ( intArity3->returns, "int32" );
+	const Be::ClassInfo* type = methods->ClassType();
+	EXPECT_EQ( intArity3, &type->mCSignatures[visited.methods["IntArity3"] - type->mCMethodTable] );
 
 	// Interface methods: the registration's signatures, or none
 	EXPECT_EQ( visited.signatures["InterfaceOnly"], &s_testMethodsSignatures[0] );
+	EXPECT_STREQ( visited.signatures["InterfaceOnly"]->returns, "string" );
+	// Hidden by the class method of that name, so its signature is the class method's
+	EXPECT_EQ( visited.signatures["IntArity0"]->argCount, 0u );
+	EXPECT_STREQ( visited.signatures["IntArity0"]->returns, "int32" );
 
 	Visited other;
 	EXPECT_TRUE( BlueCForEachMethod( interfaces->ClassType(), &Visit, &other ) );

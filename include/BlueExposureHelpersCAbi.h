@@ -12,12 +12,17 @@
 //
 // A thunk resolves self (an IRoot*) to the method's class with dynamic_cast, as BluePythonCast
 // does, and never lets a C++ exception or a failed Be::Result escape: both become BlueCError.
+//
+// Alongside, the exposure macros record what a thunk takes and returns, in the type names of
+// BlueCAbiTypeName.h: BlueCGetSignature for methods and functions, BlueCPropertyTypeName for
+// properties.
 
 #pragma once
 #ifndef BlueExposureHelpersCAbi_h
 #define BlueExposureHelpersCAbi_h
 
 #include "BlueCAbiCall.h"
+#include "BlueCAbiTypeName.h"
 #include <exception>
 #include <typeinfo>
 #include <vector>
@@ -73,7 +78,7 @@ C* GetSelf( BlueObject* self, BlueCError& err )
 	C* p = dynamic_cast<C*>( obj );
 	if( !p )
 	{
-		BlueCSetError( &err, BLUE_E_SELF, "object of class %s is not a %s", BlueCClassNameOf( obj ), BlueCTypeName( typeid( C ).name() ).c_str() );
+		BlueCSetError( &err, BLUE_E_SELF, "object of class %s is not a %s", BlueCClassNameOf( obj ), BlueCDemangle( typeid( C ).name() ).c_str() );
 	}
 	return p;
 }
@@ -203,6 +208,96 @@ int32_t BlueCPropertySetter( BlueObject* self, const BlueCValue* in, BlueCError*
 
 
 //--------------------------------------------------------------------
+// Signatures
+//--------------------------------------------------------------------
+
+// What a C method or module function takes and returns, as a caller of its thunk sees it
+// (BlueCAbiCall.h): a Be::Result's out parameter is the return value, not an argument. The
+// strings are BlueCAbiTypeName.h names; they and the args array live as long as the process.
+struct BlueCSignature
+{
+	const char* returns;			// "void" when the call returns NONE
+	const char* const* args;		// argCount names (may be null when argCount is 0)
+	uint32_t argCount;				// arguments a caller passes at most
+	uint32_t optionalCount;			// how many trailing ones it may omit
+};
+
+namespace BlueCAbiDetail
+{
+
+template< typename F, typename Sequence >
+struct SignatureArguments;
+
+// The names of the argument types the thunk extracts into, ending with a null entry
+template< typename F, size_t... I >
+struct SignatureArguments< F, std::index_sequence<I...> >
+{
+	static const char* const* Get()
+	{
+		static const char* const s_args[sizeof...( I ) + 1] = { BlueCTypeName< typename BlueCArgStorage< ArgumentType<F, I> >::type >::Get()..., nullptr };
+		return s_args;
+	}
+};
+
+// The name of what Invoke<F> hands back
+template< typename F >
+const char* SignatureReturn()
+{
+	constexpr ReturnKind kind = GetReturnKind<F>();
+	typedef typename LastArgument<F>::type Last;
+
+	if constexpr( kind == ReturnKind::Void || kind == ReturnKind::Result )
+	{
+		return BlueCTypeName<void>::Get();
+	}
+	else if constexpr( kind == ReturnKind::Value )
+	{
+		return BlueCTypeName< typename remove_const_and_reference< typename FunctionTraits<F>::Return >::type >::Get();
+	}
+	else if constexpr( kind == ReturnKind::ResultObject )
+	{
+		return BlueCTypeName< typename std::remove_pointer<Last>::type >::Get();
+	}
+	else
+	{
+		return BlueCTypeName< typename remove_const_and_reference<Last>::type >::Get();
+	}
+}
+
+} // namespace BlueCAbiDetail
+
+// The signature of the thunk BlueCMethodHelperWithOptionalArgs / BlueCFunctionHelper makes of a
+// function of type F
+template< typename F >
+BlueCSignature BlueCGetSignature( uint32_t numOptional )
+{
+	constexpr size_t arity = BlueCAbiDetail::ScriptArity<F>();
+	BlueCSignature signature = {
+		BlueCAbiDetail::SignatureReturn<F>(),
+		BlueCAbiDetail::SignatureArguments< F, std::make_index_sequence<arity> >::Get(),
+		uint32_t( arity ),
+		numOptional,
+	};
+	return signature;
+}
+
+// The type name of a MAP_PROPERTY's value: what its getter returns (BlueCPropertyGetter)
+template< typename getterFnType >
+const char* BlueCPropertyTypeName()
+{
+	typedef typename BlueCAbiDetail::FunctionTraits<getterFnType>::Return R;
+	if constexpr( is_be_result<R>::type::value )
+	{
+		return BlueCTypeName< typename remove_const_and_reference< BlueCAbiDetail::ArgumentType<getterFnType, 0> >::type >::Get();
+	}
+	else
+	{
+		return BlueCTypeName< typename remove_const_and_reference<R>::type >::Get();
+	}
+}
+
+
+//--------------------------------------------------------------------
 // Lookup through Be::ClassInfo (BlueCAbi.cpp)
 //
 // Names are UTF-8 with an explicit length. Classes are searched before their parents, so a
@@ -214,9 +309,9 @@ int32_t BlueCPropertySetter( BlueObject* self, const BlueCValue* in, BlueCError*
 // A class's methods hide its interfaces' methods of the same name, as in Python.
 BLUEIMPORT const BlueCMethodDef* BlueCFindMethod( const Be::ClassInfo* type, const char* name, size_t nameLength );
 
-// Called by BlueCForEachMethod with a method and its signature (null when none was recorded).
-// Returns false to stop.
-typedef bool ( *BlueCMethodVisitor )( const BlueCMethodDef* method, const Be::BlueExposureFunctionSignature* signature, void* context );
+// Called by BlueCForEachMethod with a method and its C signature (null when none was recorded:
+// an interface method registered without signatures). Returns false to stop.
+typedef bool ( *BlueCMethodVisitor )( const BlueCMethodDef* method, const BlueCSignature* signature, void* context );
 
 // Visit every method BlueCFindMethod can find for type, in its lookup order (own methods,
 // parents' methods, interface methods), each name once with the method BlueCFindMethod returns
@@ -230,6 +325,12 @@ BLUEIMPORT const BlueCMethodDef* BlueCFindFunction( const std::vector<BlueCMetho
 // Hidden members are skipped. extraOffset (optional) receives the parent offset to pass to
 // BeMapMemberOffset for an attribute.
 BLUEIMPORT const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name, size_t nameLength, ptrdiff_t* extraOffset );
+
+// The type name (BlueCAbiTypeName.h) of a member as BlueCGetMember reads it: a property's
+// recorded mCTypeName; for an attribute, derived from its VARTYPE, size and IID as the attribute
+// conversion does. A member the C ABI cannot read is "unknown:<VARTYPE>" (a property without a C
+// getter, a VARTYPE without a conversion).
+BLUEIMPORT const char* BlueCMemberTypeName( const Be::VarEntry& entry );
 
 // Read a member of obj: a property through its C getter, an attribute through its VARTYPE
 BLUEIMPORT int32_t BlueCGetMember( IRoot* obj, const char* name, size_t nameLength, BlueCValue* out, BlueCError* err );
