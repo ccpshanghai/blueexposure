@@ -15,9 +15,10 @@
 //   bool                               BOOL
 //   signed integers, enums             INT    (range-checked on extract)
 //   unsigned integers                  UINT   (range-checked on extract)
-//   float, double                      DOUBLE (INT and UINT are accepted on extract)
+//   float, double                      DOUBLE (INT and UINT are accepted on extract; a finite
+//                                      value beyond float's range is BLUE_E_OVERFLOW for float)
 //   std::string, const char*,
-//   BlueSharedString                   STRING
+//   BlueSharedString                   STRING (must be UTF-8 on wrap: BLUE_E_INVALID_ARGUMENT)
 //   std::wstring, const wchar_t*,
 //   BlueSharedStringW                  STRING (UTF-8 <-> wchar_t)
 //   Vector2/3/4, Color, Quaternion     VECTOR count | FLOAT [| COLOR / QUATERNION]
@@ -139,6 +140,10 @@ BLUEIMPORT bool BlueCExtractBool( const BlueCValue& value, bool& result, unsigne
 BLUEIMPORT bool BlueCExtractSigned( const BlueCValue& value, int64_t& result, int64_t minValue, int64_t maxValue, const char* typeName, unsigned argIndex, BlueCError* err );
 BLUEIMPORT bool BlueCExtractUnsigned( const BlueCValue& value, uint64_t& result, uint64_t maxValue, const char* typeName, unsigned argIndex, BlueCError* err );
 BLUEIMPORT bool BlueCExtractDouble( const BlueCValue& value, double& result, unsigned argIndex, BlueCError* err );
+
+// Whether values[0, count) can be narrowed to float: a finite value beyond +-FLT_MAX fails with
+// BLUE_E_OVERFLOW (the Python backend's cast is undefined there); inf and NaN pass unchanged
+BLUEIMPORT bool BlueCCheckFloatRange( const double* values, size_t count, unsigned argIndex, BlueCError* err );
 BLUEIMPORT bool BlueCExtractString( const BlueCValue& value, std::string& result, unsigned argIndex, BlueCError* err );
 BLUEIMPORT bool BlueCExtractWString( const BlueCValue& value, std::wstring& result, unsigned argIndex, BlueCError* err );
 BLUEIMPORT bool BlueCExtractSharedString( const BlueCValue& value, BlueSharedString& result, unsigned argIndex, BlueCError* err );
@@ -156,6 +161,8 @@ BLUEIMPORT void BlueCWrapBool( bool value, BlueCValue& out );
 BLUEIMPORT void BlueCWrapInt( int64_t value, BlueCValue& out );
 BLUEIMPORT void BlueCWrapUInt( uint64_t value, BlueCValue& out );
 BLUEIMPORT void BlueCWrapDouble( double value, BlueCValue& out );
+// STRING holding a NUL-terminated copy of value[0, length); fails with BLUE_E_INVALID_ARGUMENT
+// unless it is valid UTF-8 (narrow C++ strings carry no encoding; binary data is BYTES)
 BLUEIMPORT bool BlueCWrapString( const char* value, size_t length, BlueCValue& out, BlueCError* err );
 BLUEIMPORT bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, BlueCError* err );
 
@@ -220,8 +227,8 @@ BLUEIMPORT int32_t BlueCCallbackInvoke( BlueCallbackHandle* handle, const BlueCV
 BLUEIMPORT int32_t BlueCSetErrorMessage( BlueCError* err, int32_t code, const char* message, size_t length );
 
 // STRING holding a NUL-terminated copy of utf8[0, length). Returns BLUE_OK, or an error (out is
-// then NONE): BLUE_E_INVALID_ARGUMENT for a null out, or a null utf8 with a length;
-// BLUE_E_OUT_OF_MEMORY.
+// then NONE): BLUE_E_INVALID_ARGUMENT for a null out, a null utf8 with a length, or text that is
+// not valid UTF-8; BLUE_E_OUT_OF_MEMORY.
 BLUEIMPORT int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, BlueCError* err );
 
 // BYTES holding a copy of data[0, length) (binary, not NUL-terminated by contract). Errors as
@@ -234,6 +241,10 @@ BLUEIMPORT int32_t BlueCValueSetArray( BlueCValue* out, size_t count, BlueCError
 // MAP of pairCount (NONE, NONE) pairs, for the caller to fill in place (kv[2n] key, kv[2n + 1]
 // value). Errors as BlueCValueSetString.
 BLUEIMPORT int32_t BlueCValueSetMap( BlueCValue* out, size_t pairCount, BlueCError* err );
+
+// Whether text[0, length) is valid UTF-8 (strict, as below; NUL is allowed). On failure,
+// invalidOffset (optional) receives the offset of the first invalid sequence.
+BLUEIMPORT bool BlueCIsUtf8( const char* text, size_t length, size_t* invalidOffset );
 
 // Strict UTF-8 <-> wchar_t (UTF-32, or UTF-16 where wchar_t is 16 bits)
 BLUEIMPORT bool BlueCUtf8ToWide( const char* utf8, size_t length, std::wstring& result );
@@ -419,6 +430,13 @@ struct BlueCConvert< T, typename std::enable_if< std::is_floating_point<T>::valu
 		{
 			return false;
 		}
+		if constexpr( sizeof( T ) < sizeof( double ) )
+		{
+			if( !BlueCCheckFloatRange( &v, 1, argIndex, err ) )
+			{
+				return false;
+			}
+		}
 		result = T( v );
 		return true;
 	}
@@ -602,6 +620,13 @@ struct BlueCConvertVector
 		if( !BlueCExtractComponents( value, components, N, integral, "vector", argIndex, err ) )
 		{
 			return false;
+		}
+		if constexpr( std::is_floating_point<Element>::value && sizeof( Element ) < sizeof( double ) )
+		{
+			if( !BlueCCheckFloatRange( components, N, argIndex, err ) )
+			{
+				return false;
+			}
 		}
 		Element* elements = reinterpret_cast<Element*>( &result );
 		for( uint32_t i = 0; i < N; ++i )

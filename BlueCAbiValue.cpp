@@ -239,6 +239,8 @@ int32_t BlueCSetErrorMessage( BlueCError* err, int32_t code, const char* message
 	return code;
 }
 
+static int32_t BlueCWrapUtf8( const char* value, size_t length, BlueCValue& out, BlueCError* err );
+
 int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, BlueCError* err )
 {
 	if( !out )
@@ -250,7 +252,7 @@ int32_t BlueCValueSetString( BlueCValue* out, const char* utf8, size_t length, B
 		BlueCValueSetNone( *out );
 		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "null string of %zu bytes", length );
 	}
-	return BlueCWrapString( utf8, length, *out, err ) ? int32_t( BLUE_OK ) : int32_t( BLUE_E_OUT_OF_MEMORY );
+	return BlueCWrapUtf8( utf8, length, *out, err );
 }
 
 int32_t BlueCValueSetBytes( BlueCValue* out, const void* data, size_t length, BlueCError* err )
@@ -604,6 +606,28 @@ bool BlueCExtractUnsigned( const BlueCValue& value, uint64_t& result, uint64_t m
 	}
 }
 
+bool BlueCCheckFloatRange( const double* values, size_t count, unsigned argIndex, BlueCError* err )
+{
+	for( size_t i = 0; i < count; ++i )
+	{
+		// Finite only: inf and NaN convert to float unchanged; underflow to 0 is not an error
+		const double v = values[i];
+		if( std::isfinite( v ) && std::fabs( v ) > double( std::numeric_limits<float>::max() ) )
+		{
+			if( count == 1 )
+			{
+				BlueCSetArgumentError( err, BLUE_E_OVERFLOW, argIndex, "%g does not fit in float", v );
+			}
+			else
+			{
+				BlueCSetArgumentError( err, BLUE_E_OVERFLOW, argIndex, "component %zu (%g) does not fit in float", i, v );
+			}
+			return false;
+		}
+	}
+	return true;
+}
+
 bool BlueCExtractDouble( const BlueCValue& value, double& result, unsigned argIndex, BlueCError* err )
 {
 	switch( value.kind )
@@ -655,6 +679,87 @@ void BlueCWrapDouble( double value, BlueCValue& out )
 // Strings
 //--------------------------------------------------------------------
 
+// Decode the code point at s[i] (i < length) into c and step i past it. Strict: overlong
+// forms, surrogates, values past U+10FFFF and truncated sequences are rejected.
+static bool BlueCDecodeUtf8( const unsigned char* s, size_t length, size_t& i, uint32_t& c )
+{
+	c = s[i];
+	size_t extra = 0;
+	uint32_t minValue = 0;
+	if( c < 0x80 )
+	{
+		extra = 0;
+	}
+	else if( ( c & 0xE0 ) == 0xC0 )
+	{
+		c &= 0x1F;
+		extra = 1;
+		minValue = 0x80;
+	}
+	else if( ( c & 0xF0 ) == 0xE0 )
+	{
+		c &= 0x0F;
+		extra = 2;
+		minValue = 0x800;
+	}
+	else if( ( c & 0xF8 ) == 0xF0 )
+	{
+		c &= 0x07;
+		extra = 3;
+		minValue = 0x10000;
+	}
+	else
+	{
+		return false;
+	}
+	if( length - i <= extra )
+	{
+		return false;
+	}
+	for( size_t k = 1; k <= extra; ++k )
+	{
+		const uint32_t next = s[i + k];
+		if( ( next & 0xC0 ) != 0x80 )
+		{
+			return false;
+		}
+		c = ( c << 6 ) | ( next & 0x3F );
+	}
+	// Overlong forms, surrogates and values past U+10FFFF are not UTF-8
+	if( c < minValue || c > 0x10FFFF || ( c >= 0xD800 && c <= 0xDFFF ) )
+	{
+		return false;
+	}
+	i += extra + 1;
+	return true;
+}
+
+bool BlueCIsUtf8( const char* text, size_t length, size_t* invalidOffset )
+{
+	const unsigned char* s = reinterpret_cast<const unsigned char*>( text );
+	size_t i = 0;
+	while( i < length )
+	{
+		// Runs of ASCII are the common case
+		if( s[i] < 0x80 )
+		{
+			++i;
+			continue;
+		}
+		const size_t start = i;
+		uint32_t c = 0;
+		if( !BlueCDecodeUtf8( s, length, i, c ) )
+		{
+			if( invalidOffset )
+			{
+				*invalidOffset = start;
+			}
+			return false;
+		}
+	}
+	return true;
+}
+
 bool BlueCUtf8ToWide( const char* utf8, size_t length, std::wstring& result )
 {
 	result.clear();
@@ -663,54 +768,11 @@ bool BlueCUtf8ToWide( const char* utf8, size_t length, std::wstring& result )
 	size_t i = 0;
 	while( i < length )
 	{
-		uint32_t c = s[i];
-		size_t extra = 0;
-		uint32_t minValue = 0;
-		if( c < 0x80 )
-		{
-			extra = 0;
-		}
-		else if( ( c & 0xE0 ) == 0xC0 )
-		{
-			c &= 0x1F;
-			extra = 1;
-			minValue = 0x80;
-		}
-		else if( ( c & 0xF0 ) == 0xE0 )
-		{
-			c &= 0x0F;
-			extra = 2;
-			minValue = 0x800;
-		}
-		else if( ( c & 0xF8 ) == 0xF0 )
-		{
-			c &= 0x07;
-			extra = 3;
-			minValue = 0x10000;
-		}
-		else
+		uint32_t c = 0;
+		if( !BlueCDecodeUtf8( s, length, i, c ) )
 		{
 			return false;
 		}
-		if( length - i <= extra )
-		{
-			return false;
-		}
-		for( size_t k = 1; k <= extra; ++k )
-		{
-			const uint32_t next = s[i + k];
-			if( ( next & 0xC0 ) != 0x80 )
-			{
-				return false;
-			}
-			c = ( c << 6 ) | ( next & 0x3F );
-		}
-		// Overlong forms, surrogates and values past U+10FFFF are not UTF-8
-		if( c < minValue || c > 0x10FFFF || ( c >= 0xD800 && c <= 0xDFFF ) )
-		{
-			return false;
-		}
-		i += extra + 1;
 
 		if( sizeof( wchar_t ) == 2 && c >= 0x10000 )
 		{
@@ -874,9 +936,22 @@ static bool BlueCCopyStringStorage( uint32_t kind, const char* data, size_t leng
 	return true;
 }
 
+// BlueCWrapString as a status: the C ABI's strings are UTF-8, so narrow C++ strings (which
+// carry no encoding) are checked, as Python's str conversion checks them
+static int32_t BlueCWrapUtf8( const char* value, size_t length, BlueCValue& out, BlueCError* err )
+{
+	size_t invalidOffset = 0;
+	if( !BlueCIsUtf8( value, length, &invalidOffset ) )
+	{
+		BlueCValueSetNone( out );
+		return BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "string is not valid UTF-8 (byte %zu of %zu)", invalidOffset, length );
+	}
+	return BlueCCopyStringStorage( BLUE_VK_STRING, value, length, out, err ) ? int32_t( BLUE_OK ) : int32_t( BLUE_E_OUT_OF_MEMORY );
+}
+
 bool BlueCWrapString( const char* value, size_t length, BlueCValue& out, BlueCError* err )
 {
-	return BlueCCopyStringStorage( BLUE_VK_STRING, value, length, out, err );
+	return BlueCWrapUtf8( value, length, out, err ) == BLUE_OK;
 }
 
 bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, BlueCError* err )
@@ -888,7 +963,8 @@ bool BlueCWrapWString( const wchar_t* value, size_t length, BlueCValue& out, Blu
 		BlueCSetError( err, BLUE_E_INVALID_ARGUMENT, "wide string is not valid Unicode" );
 		return false;
 	}
-	return BlueCWrapString( utf8.data(), utf8.size(), out, err );
+	// Valid by construction
+	return BlueCCopyStringStorage( BLUE_VK_STRING, utf8.data(), utf8.size(), out, err );
 }
 
 
@@ -1081,6 +1157,10 @@ bool BlueCExtractMatrix( const BlueCValue& value, float* elements16, unsigned ar
 		return BlueCTypeMismatch( err, argIndex, "matrix", value );
 	}
 
+	if( !BlueCCheckFloatRange( components, 16, argIndex, err ) )
+	{
+		return false;
+	}
 	for( size_t i = 0; i < 16; ++i )
 	{
 		elements16[i] = float( components[i] );

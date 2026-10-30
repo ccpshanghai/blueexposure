@@ -220,6 +220,14 @@ static uint32_t BlueCVectorTag( const Be::VarEntry* entry )
 	return BLUE_VEC_TAG_NONE;
 }
 
+// Whether an array attribute is a Matrix: by its IID, as the Python backend decides
+// (BlueVariable.cpp); any other array of 16 floats is a plain array
+template< typename Element >
+static bool BlueCIsMatrix( size_t count, uint32_t tag )
+{
+	return std::is_same<Element, float>::value && count == 16 && tag == BLUE_VEC_TAG_MATRIX;
+}
+
 template< typename Element >
 static bool BlueCWrapNumberArray( const Element* elements, size_t count, uint32_t elementType, uint32_t tag, BlueCValue& out, BlueCError* err )
 {
@@ -233,7 +241,7 @@ static bool BlueCWrapNumberArray( const Element* elements, size_t count, uint32_
 		BlueCWrapComponents( components, uint32_t( count ), elementType | tag, out );
 		return true;
 	}
-	if( std::is_same<Element, float>::value && count == 16 )
+	if( BlueCIsMatrix<Element>( count, tag ) )
 	{
 		return BlueCWrapMatrix( reinterpret_cast<const float*>( elements ), out, err );
 	}
@@ -242,15 +250,21 @@ static bool BlueCWrapNumberArray( const Element* elements, size_t count, uint32_
 	} );
 }
 
+// Assigns elements only once every component converts, so a failed set leaves the attribute as
+// it was
 template< typename Element >
-static bool BlueCExtractNumberArray( const BlueCValue& in, Element* elements, size_t count, BlueCError* err )
+static bool BlueCExtractNumberArray( const BlueCValue& in, Element* elements, size_t count, uint32_t tag, BlueCError* err )
 {
-	if( std::is_same<Element, float>::value && count == 16 )
+	if( BlueCIsMatrix<Element>( count, tag ) )
 	{
 		return BlueCExtractMatrix( in, reinterpret_cast<float*>( elements ), BLUE_CABI_VALUE_INDEX, err );
 	}
 	std::vector<double> components( count );
 	if( !BlueCExtractComponents( in, components.data(), count, std::is_integral<Element>::value, "vector", BLUE_CABI_VALUE_INDEX, err ) )
+	{
+		return false;
+	}
+	if( std::is_same<Element, float>::value && !BlueCCheckFloatRange( components.data(), count, BLUE_CABI_VALUE_INDEX, err ) )
 	{
 		return false;
 	}
@@ -528,13 +542,13 @@ static int32_t BlueCSetAttribute( IRoot* obj, const Be::VarEntry* entry, ptrdiff
 		break;
 	}
 	case Be::FLOATARRAY:
-		ok = BlueCExtractNumberArray( in, reinterpret_cast<float*>( value ), entry->GetFloatArraySize(), &err );
+		ok = BlueCExtractNumberArray( in, reinterpret_cast<float*>( value ), entry->GetFloatArraySize(), BlueCVectorTag( entry ), &err );
 		break;
 	case Be::DOUBLEARRAY:
-		ok = BlueCExtractNumberArray( in, reinterpret_cast<double*>( value ), entry->GetDoubleArraySize(), &err );
+		ok = BlueCExtractNumberArray( in, reinterpret_cast<double*>( value ), entry->GetDoubleArraySize(), BlueCVectorTag( entry ), &err );
 		break;
 	case Be::INTARRAY:
-		ok = BlueCExtractNumberArray( in, reinterpret_cast<int*>( value ), entry->GetIntArraySize(), &err );
+		ok = BlueCExtractNumberArray( in, reinterpret_cast<int*>( value ), entry->GetIntArraySize(), BLUE_VEC_TAG_NONE, &err );
 		break;
 	case Be::IROOTPTR:
 		if( BlueCSetObjectPointer( entry, value, in, err ) != BLUE_OK )
