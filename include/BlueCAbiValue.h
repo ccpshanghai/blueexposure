@@ -183,7 +183,10 @@ BLUEIMPORT bool BlueCExtractBytes( const BlueCValue& value, const void*& data, s
 BLUEIMPORT void BlueCWrapComponents( const double* elements, uint32_t count, uint32_t elementAndTag, BlueCValue& out );
 BLUEIMPORT bool BlueCWrapMatrix( const float* elements16, BlueCValue& out, BlueCError* err );
 
-// OBJECT holding one reference to obj (obj is locked), or NONE for null
+// OBJECT holding one reference to obj, or NONE for null. The pointer stored is always the
+// object's root (obj->GetRootObject()), whichever of its interface pointers obj is, so one object
+// has one BlueObject* (BlueCAbi.h, Objects). Every object conversion wraps through here: T*,
+// BluePtr<T>, IRootPtr, weak references, object attributes and out parameters.
 BLUEIMPORT void BlueCWrapObject( IRoot* obj, BlueCValue& out );
 
 // CALLBACK holding one reference to handle (added), or NONE for null
@@ -688,7 +691,8 @@ BLUEIMPORT const char* BlueCClassNameOf( IRoot* obj );
 
 // Pointer to a Blue class or interface. Extract casts the IRoot* to the expected type the way
 // BluePythonCast does (dynamic_cast); wrap reinterprets the pointer as IRoot*, as the Python
-// backend does (IRoot is first in every branch of the inheritance graph), and adds a reference.
+// backend does (IRoot is first in every branch of the inheritance graph), and BlueCWrapObject
+// stores the object's root with a reference added.
 template< typename T >
 struct BlueCConvert< T, typename std::enable_if< is_pointer_to_blue<T>::type::value >::type >
 {

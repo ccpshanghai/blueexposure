@@ -25,8 +25,10 @@ add_executable(BlueExposureCAbiTests
     TestCAbiCallbacks.cpp
     TestCAbiFind.cpp
     TestCAbiCalls.cpp
+    TestCAbiIdentity.cpp
     TestCAbiConversions.cpp
     TestCAbiInterfaceMethods.cpp
+    TestCAbiMemberEntries.cpp
     TestCAbiMembers.cpp
     TestCAbiSmartPointers.cpp
     TestCAbiTypeNames.cpp

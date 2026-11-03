@@ -326,17 +326,34 @@ BLUEIMPORT const BlueCMethodDef* BlueCFindFunction( const std::vector<BlueCMetho
 // BeMapMemberOffset for an attribute.
 BLUEIMPORT const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name, size_t nameLength, ptrdiff_t* extraOffset );
 
+// The member BlueCFindMember finds, resolved once for BlueCGetMemberEntry / BlueCSetMemberEntry:
+// owner (optional; null when none is found) receives the class whose member table holds it,
+// type itself or one of its parents. The result is the same entry for type and for every
+// subclass of type that does not declare a member of that name itself.
+BLUEIMPORT const Be::VarEntry* BlueCResolveMember( const Be::ClassInfo* type, const char* name, size_t nameLength, const Be::ClassInfo** owner );
+
 // The type name (BlueCAbiTypeName.h) of a member as BlueCGetMember reads it: a property's
 // recorded mCTypeName; for an attribute, derived from its VARTYPE, size and IID as the attribute
 // conversion does. A member the C ABI cannot read is "unknown:<VARTYPE>" (a property without a C
 // getter, a VARTYPE without a conversion).
 BLUEIMPORT const char* BlueCMemberTypeName( const Be::VarEntry& entry );
 
-// Read a member of obj: a property through its C getter, an attribute through its VARTYPE
+// Read a member of obj: a property through its C getter, an attribute through its VARTYPE.
+// BlueCResolveMember on obj's class, then BlueCGetMemberEntry.
 BLUEIMPORT int32_t BlueCGetMember( IRoot* obj, const char* name, size_t nameLength, BlueCValue* out, BlueCError* err );
 
 // Assign a member of obj: a property through its C setter, an attribute through its VARTYPE
-// (if it is writable; INotify::OnModified is called for NOTIFY attributes)
+// (if it is writable; INotify::OnModified is called for NOTIFY attributes). BlueCResolveMember on
+// obj's class, then BlueCSetMemberEntry.
 BLUEIMPORT int32_t BlueCSetMember( IRoot* obj, const char* name, size_t nameLength, const BlueCValue* in, BlueCError* err );
+
+// BlueCGetMember / BlueCSetMember for a member resolved beforehand (BlueCResolveMember): entry and
+// the class owner that holds it. No name is compared; the attribute's parent offset comes from
+// walking obj's class up to owner. Same results and statuses as by name, plus:
+//   - obj null, or of a class that is neither owner nor a subclass of it: BLUE_E_SELF;
+//   - owner or entry null: BLUE_E_INVALID_ARGUMENT.
+// obj may be any interface pointer of the object.
+BLUEIMPORT int32_t BlueCGetMemberEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, BlueCValue* out, BlueCError* err );
+BLUEIMPORT int32_t BlueCSetMemberEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, const BlueCValue* in, BlueCError* err );
 
 #endif // BlueExposureHelpersCAbi_h

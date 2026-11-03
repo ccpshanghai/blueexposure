@@ -19,6 +19,42 @@
  *   - Strings are UTF-8 with an explicit length. Strings blue produces are additionally
  *     NUL-terminated; strings passed in need not be.
  *   - Bytes (BLUE_VK_BYTES) are binary data with an explicit length and no terminator.
+ *
+ * Objects: every BlueObject* blue hands out (in an output value, a callback argument, an object
+ * attribute) is the object's root IRoot*, so two pointers name the same object exactly when they
+ * are equal. Blue accepts any IRoot* of an object as input.
+ *
+ * Threading (C++ helpers of BlueExposureHelpersCAbi.h and BlueCAbiValue.h; the Blue C API states
+ * its own rules on top of these):
+ *   - Any thread: the value helpers (BlueCValueSet*, BlueCValueRelease, BlueCAllocateValues,
+ *     BlueCFreeValues), BlueCKindName, the error helpers (BlueCSetError, BlueCSetErrorMessage,
+ *     BlueCErrorClear) and the callback handle helpers (BlueCCallbackCreate / AddRef / Release /
+ *     Get; the handle's count is atomic). They touch no shared state, except that releasing a
+ *     value drops the references it holds on the calling thread: the last reference to an object
+ *     destroys it there, and the last reference to a callback handle runs its destroy there.
+ *   - Main thread: everything that touches an object, a class or a registry - the thunks,
+ *     member access (BlueCGetMember / BlueCSetMember and their *Entry forms), lookup
+ *     (BlueCFindMethod, BlueCForEachMethod, BlueCFindFunction, BlueCFindMember,
+ *     BlueCResolveMember) and conversions of objects. Nothing here locks: blue objects are not
+ *     thread-safe, and the registries are plain containers. The main thread is the one the
+ *     host runs blue on (the Blue C API: the thread that called blue_initialize).
+ *   - Registration: the class, function and interface-method registrars (BLUE_DEFINE*,
+ *     MAP_FUNCTION_AND_WRAP, BLUE_REGISTER_CTHUNKER) run during the static initialisation of
+ *     their module, on the thread that loads it, before the load returns. A class's ClassInfo is
+ *     built there too (its registrar calls ExposeToBlue); ExposeToBlue's first call is not
+ *     thread-safe, so a class without a registrar must see its first ClassType() call on the main
+ *     thread. Blue then registers the classes with BeClasses in BlueModuleStartup, on the main
+ *     thread. A module loaded later must be loaded on the main thread, while no lookup runs, and
+ *     before any of its classes is used.
+ *   - A host callback's fn runs on whichever thread blue calls it from; blue does not restrict
+ *     that (a callback blue keeps may be called from a worker thread). Blue holds no extra
+ *     reference on the handle while fn runs.
+ *   - A callback handle's destroy runs on the thread that drops the last reference: the host's
+ *     BlueCCallbackRelease, a BlueCValueRelease of a CALLBACK value, or blue releasing the
+ *     BlueScriptCallback that holds it - when that callback is reassigned or when the object that
+ *     holds it is destroyed (on the thread of its last Unlock, or in
+ *     BlueClasses::ProcessAllPendingDeletes for delayed deletes). There is no hop to another
+ *     thread.
  */
 
 #pragma once
@@ -38,7 +74,8 @@ extern "C" {
 #define BLUE_CABI_VERSION_MINOR 0
 #define BLUE_CABI_VERSION ( ( BLUE_CABI_VERSION_MAJOR << 16 ) | BLUE_CABI_VERSION_MINOR )
 
-/* An exposed object. Opaque on the C side; it is an IRoot* of the object. */
+/* An exposed object. Opaque on the C side; it is an IRoot* of the object, its root when blue
+ * hands it out (see Objects above). */
 typedef struct BlueObject BlueObject;
 
 /* A host callback (BlueCCallback) wrapped for blue. Opaque and reference counted, like an

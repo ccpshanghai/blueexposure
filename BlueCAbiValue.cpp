@@ -1231,7 +1231,11 @@ void BlueCWrapObject( IRoot* obj, BlueCValue& out )
 	{
 		return;
 	}
-	obj->Lock();
+	// One object, one pointer: an interface pointer of a class with several IRoot bases is
+	// handed out as the object's root. The reference count is the object's, whichever pointer
+	// locks it.
+	IRoot* root = obj->GetRootObject();
+	root->Lock();
 	out.kind = BLUE_VK_OBJECT;
-	out.u.obj = reinterpret_cast<BlueObject*>( obj );
+	out.u.obj = reinterpret_cast<BlueObject*>( root );
 }

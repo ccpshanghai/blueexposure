@@ -169,7 +169,9 @@ const BlueCMethodDef* BlueCFindFunction( const std::vector<BlueCMethodDef>& func
 	return nullptr;
 }
 
-const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name, size_t nameLength, ptrdiff_t* extraOffset )
+// The walk behind BlueCFindMember and BlueCResolveMember: the member, the class whose table holds
+// it, and the sum of mOffsetToParent of the classes below that one
+static const Be::VarEntry* BlueCWalkMembers( const Be::ClassInfo* type, const char* name, size_t nameLength, const Be::ClassInfo** owner, ptrdiff_t* extraOffset )
 {
 	if( !name )
 	{
@@ -182,6 +184,10 @@ const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name
 		{
 			if( ( entry->mEditFlags & Be::HIDDEN ) == 0 && BlueCNameEquals( entry->mName, name, nameLength ) )
 			{
+				if( owner )
+				{
+					*owner = type;
+				}
 				if( extraOffset )
 				{
 					*extraOffset = offset;
@@ -191,6 +197,20 @@ const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name
 		}
 	}
 	return nullptr;
+}
+
+const Be::VarEntry* BlueCFindMember( const Be::ClassInfo* type, const char* name, size_t nameLength, ptrdiff_t* extraOffset )
+{
+	return BlueCWalkMembers( type, name, nameLength, nullptr, extraOffset );
+}
+
+const Be::VarEntry* BlueCResolveMember( const Be::ClassInfo* type, const char* name, size_t nameLength, const Be::ClassInfo** owner )
+{
+	if( owner )
+	{
+		*owner = nullptr;
+	}
+	return BlueCWalkMembers( type, name, nameLength, owner, nullptr );
 }
 
 
@@ -750,14 +770,94 @@ static int32_t BlueCSetAttribute( IRoot* obj, const Be::VarEntry* entry, ptrdiff
 // Members
 //--------------------------------------------------------------------
 
-static const Be::VarEntry* BlueCLookupMember( IRoot* obj, const char* name, size_t nameLength, ptrdiff_t& extraOffset, BlueCError& err )
+static const char* BlueCClassName( const Be::ClassInfo* type )
+{
+	if( !type || !type->mClassId || !type->mClassId->GetName() )
+	{
+		return "<unknown>";
+	}
+	return type->mClassId->GetName();
+}
+
+// Check that obj, owner and entry are given and that owner is obj's class or one of its parents,
+// and compute extraOffset as BlueCFindMember does for a member of owner: the sum of
+// mOffsetToParent of the classes below owner in obj's chain
+static bool BlueCCheckMemberAccess( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, ptrdiff_t& extraOffset, BlueCError& err )
+{
+	if( !obj )
+	{
+		BlueCSetError( &err, BLUE_E_SELF, "member access without an object" );
+		return false;
+	}
+	if( !owner || !entry )
+	{
+		BlueCSetError( &err, BLUE_E_INVALID_ARGUMENT, "member access without a member" );
+		return false;
+	}
+	ptrdiff_t offset = 0;
+	for( const Be::ClassInfo* type = obj->ClassType(); type; offset += type->mOffsetToParent, type = type->mParentClassInfo )
+	{
+		if( type == owner )
+		{
+			extraOffset = offset;
+			return true;
+		}
+	}
+	BlueCSetError( &err, BLUE_E_SELF, "object of class %s is not a %s", BlueCClassNameOf( obj ), BlueCClassName( owner ) );
+	return false;
+}
+
+static int32_t BlueCGetEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, BlueCValue& result, BlueCError& error )
+{
+	ptrdiff_t extraOffset = 0;
+	if( !BlueCCheckMemberAccess( obj, owner, entry, extraOffset, error ) )
+	{
+		return error.code;
+	}
+
+	if( entry->mCGet || entry->mGetProperty )
+	{
+		if( !( entry->mEditFlags & Be::READ ) )
+		{
+			return BlueCSetError( &error, BLUE_E_UNSUPPORTED, "property '%s' is not readable", entry->mName );
+		}
+		if( !entry->mCGet )
+		{
+			return BlueCSetError( &error, BLUE_E_UNSUPPORTED, "property '%s' has no C getter", entry->mName );
+		}
+		return entry->mCGet( reinterpret_cast<BlueObject*>( obj ), &result, &error );
+	}
+	return BlueCGetAttribute( obj, entry, extraOffset, result, error );
+}
+
+// in has been checked
+static int32_t BlueCSetEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, const BlueCValue& in, BlueCError& error )
+{
+	ptrdiff_t extraOffset = 0;
+	if( !BlueCCheckMemberAccess( obj, owner, entry, extraOffset, error ) )
+	{
+		return error.code;
+	}
+
+	if( entry->mCGet || entry->mGetProperty )
+	{
+		if( !entry->mCSet )
+		{
+			return BlueCSetError( &error, BLUE_E_READ_ONLY, "property '%s' is read-only", entry->mName );
+		}
+		return entry->mCSet( reinterpret_cast<BlueObject*>( obj ), &in, &error );
+	}
+	return BlueCSetAttribute( obj, entry, extraOffset, in, error );
+}
+
+static const Be::VarEntry* BlueCLookupMember( IRoot* obj, const char* name, size_t nameLength, const Be::ClassInfo*& owner, BlueCError& err )
 {
 	if( !obj )
 	{
 		BlueCSetError( &err, BLUE_E_SELF, "member access without an object" );
 		return nullptr;
 	}
-	const Be::VarEntry* entry = BlueCFindMember( obj->ClassType(), name, nameLength, &extraOffset );
+	const Be::VarEntry* entry = BlueCResolveMember( obj->ClassType(), name, nameLength, &owner );
 	if( !entry )
 	{
 		BlueCSetError( &err, BLUE_E_NOT_FOUND, "%s has no member '%.*s'", BlueCClassNameOf( obj ), int( name ? nameLength : 0 ), name ? name : "" );
@@ -765,29 +865,34 @@ static const Be::VarEntry* BlueCLookupMember( IRoot* obj, const char* name, size
 	return entry;
 }
 
+int32_t BlueCGetMemberEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, BlueCValue* out, BlueCError* err )
+{
+	return BlueCAbiDetail::Guard( out, err, [&]( BlueCValue& result, BlueCError& error ) -> int32_t {
+		return BlueCGetEntry( obj, owner, entry, result, error );
+	} );
+}
+
+int32_t BlueCSetMemberEntry( IRoot* obj, const Be::ClassInfo* owner, const Be::VarEntry* entry, const BlueCValue* in, BlueCError* err )
+{
+	return BlueCAbiDetail::Guard( nullptr, err, [&]( BlueCValue&, BlueCError& error ) -> int32_t {
+		if( !in )
+		{
+			return BlueCSetError( &error, BLUE_E_INVALID_ARGUMENT, "no value to set" );
+		}
+		return BlueCSetEntry( obj, owner, entry, *in, error );
+	} );
+}
+
 int32_t BlueCGetMember( IRoot* obj, const char* name, size_t nameLength, BlueCValue* out, BlueCError* err )
 {
 	return BlueCAbiDetail::Guard( out, err, [&]( BlueCValue& result, BlueCError& error ) -> int32_t {
-		ptrdiff_t extraOffset = 0;
-		const Be::VarEntry* entry = BlueCLookupMember( obj, name, nameLength, extraOffset, error );
+		const Be::ClassInfo* owner = nullptr;
+		const Be::VarEntry* entry = BlueCLookupMember( obj, name, nameLength, owner, error );
 		if( !entry )
 		{
 			return error.code;
 		}
-
-		if( entry->mCGet || entry->mGetProperty )
-		{
-			if( !( entry->mEditFlags & Be::READ ) )
-			{
-				return BlueCSetError( &error, BLUE_E_UNSUPPORTED, "property '%s' is not readable", entry->mName );
-			}
-			if( !entry->mCGet )
-			{
-				return BlueCSetError( &error, BLUE_E_UNSUPPORTED, "property '%s' has no C getter", entry->mName );
-			}
-			return entry->mCGet( reinterpret_cast<BlueObject*>( obj ), &result, &error );
-		}
-		return BlueCGetAttribute( obj, entry, extraOffset, result, error );
+		return BlueCGetEntry( obj, owner, entry, result, error );
 	} );
 }
 
@@ -798,21 +903,12 @@ int32_t BlueCSetMember( IRoot* obj, const char* name, size_t nameLength, const B
 		{
 			return BlueCSetError( &error, BLUE_E_INVALID_ARGUMENT, "no value to set" );
 		}
-		ptrdiff_t extraOffset = 0;
-		const Be::VarEntry* entry = BlueCLookupMember( obj, name, nameLength, extraOffset, error );
+		const Be::ClassInfo* owner = nullptr;
+		const Be::VarEntry* entry = BlueCLookupMember( obj, name, nameLength, owner, error );
 		if( !entry )
 		{
 			return error.code;
 		}
-
-		if( entry->mCGet || entry->mGetProperty )
-		{
-			if( !entry->mCSet )
-			{
-				return BlueCSetError( &error, BLUE_E_READ_ONLY, "property '%s' is read-only", entry->mName );
-			}
-			return entry->mCSet( reinterpret_cast<BlueObject*>( obj ), in, &error );
-		}
-		return BlueCSetAttribute( obj, entry, extraOffset, *in, error );
+		return BlueCSetEntry( obj, owner, entry, *in, error );
 	} );
 }
