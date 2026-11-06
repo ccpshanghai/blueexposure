@@ -6,7 +6,7 @@
 
 #define BLUE_INVOKE_C_API_ONLY 1
 #include "BlueInvoke.h"
-#include "BlueTypes.h" // IRoot's interface (Lock/Unlock/GetRefCount) and Be::VarChooser; no Blue code is linked
+#include "BlueTypes.h" // IRoot's interface (Lock/Unlock/GetRefCount); no Blue code is linked
 
 #include <Python.h>
 #include <dlfcn.h>
@@ -283,6 +283,18 @@ void TestRoundTrips( const BlueInvokeClassTable* t, IRoot* self, IRoot* other )
 	Invoke( c, Method( t, "EchoDouble" ), self, { Dbl( 0.1 ) } );
 	CHECK( c.rc == BIS_OK && c.r.tag == BIV_DOUBLE && c.r.v.d == 0.1, "double" );
 
+	// bool into numeric and enum parameters: Python's True/False are ints, and Blue accepts them there
+	Invoke( c, Method( t, "EchoInt" ), self, { Bool( true ) } );
+	CHECK( c.rc == BIS_OK && c.r.tag == BIV_INT && c.r.v.i == 1, "int from bool rc %d", c.rc );
+	Invoke( c, Method( t, "EchoUInt" ), self, { Bool( false ) } );
+	CHECK( c.rc == BIS_OK && c.r.tag == BIV_UINT && c.r.v.u == 0, "uint from bool rc %d", c.rc );
+	Invoke( c, Method( t, "EchoDouble" ), self, { Bool( true ) } );
+	CHECK( c.rc == BIS_OK && c.r.v.d == 1.0, "double from bool rc %d", c.rc );
+	Invoke( c, Method( t, "TakeMode" ), self, { Bool( true ) } );
+	CHECK( c.rc == BIS_OK && c.r.v.i == 1, "enum from bool rc %d", c.rc );
+	Invoke( c, Method( t, "EchoBool" ), self, { Int( 2 ) } );
+	CHECK( c.rc == BIS_OK && c.r.v.i == 1, "bool from int (unchanged) rc %d", c.rc );
+
 	const char* utf8 = "h\xc3\xa9llo \xe2\x82\xac \xf0\x9d\x84\x9e"; // héllo € 𝄞
 	Invoke( c, Method( t, "EchoCStr" ), self, { Str( "const char" ) } );
 	CHECK( c.rc == BIS_OK && AsString( c.r ) == "const char" && c.r.release, "const char*" );
@@ -497,17 +509,25 @@ void TestProperties( const BlueInvokeClassTable* p, IRoot* self )
 void TestEnumsAndHashes( const Lib& lib, const char* module, const BlueInvokeClassTable* t )
 {
 	const std::string enumName = std::string( module ) + "_MODE";
-	const Be::VarChooser* c = static_cast<const Be::VarChooser*>( BlueInvokeFind( enumName.c_str(), BLUE_INVOKE_CAP_ENUMS ) );
-	CHECK( c != nullptr, "enum %s registered", enumName.c_str() );
-	if( c )
-	{
-		// read as EnumTypeRegistration does: mValue.mLong (BeCast copies the enum's bits)
-		CHECK( std::strcmp( c[0].mKey, "MODE_A" ) == 0 && std::strcmp( c[1].mKey, "MODE_B" ) == 0 && std::strcmp( c[2].mKey, "MODE_C" ) == 0 &&
-				   c[3].mKey == nullptr && c[0].mValue.mLong == 0 && c[1].mValue.mLong == 5 && c[2].mValue.mLong == 9,
-			   "chooser keys and values" );
-	}
+	const BlueInvokeEnumTable* et = static_cast<const BlueInvokeEnumTable*>( BlueInvokeFind( enumName.c_str(), BLUE_INVOKE_CAP_ENUMS ) );
+	CHECK( et != nullptr, "enum %s registered", enumName.c_str() );
 	const std::type_info* modeType = lib.modeType();
 	const std::type_info* otherType = lib.otherType();
+	if( et )
+	{
+		// the same header as the class tables, then values copied from the chooser (mValue.mLong)
+		CHECK( et->magic == BLUE_INVOKE_MAGIC && et->sizeofValue == sizeof( BlueInvokeValue ) && et->sizeofEntry == sizeof( BlueInvokeEnumValue ) &&
+				   et->count == 3 && et->buildId && std::strcmp( et->buildId, BLUE_INVOKE_BUILD_ID ) == 0,
+			   "enum table header" );
+		const BlueInvokeEnumValue* v = et->values;
+		CHECK( v && std::strcmp( v[0].name, "MODE_A" ) == 0 && std::strcmp( v[1].name, "MODE_B" ) == 0 && std::strcmp( v[2].name, "MODE_C" ) == 0 &&
+				   v[0].value == 0 && v[1].value == 5 && v[2].value == 9 && v[1].description && std::strcmp( v[1].description, "B" ) == 0,
+			   "enum names, values and descriptions" );
+		CHECK( et->enumType && *et->enumType == *modeType && et->typeName && std::strstr( et->typeName, "Mode" ), "enum table type %s",
+			   et->typeName ? et->typeName : "(null)" );
+		const BlueInvokeProperty* mode = Property( Table( ( std::string( module ) + ".InvokeTestObj" ).c_str(), BLUE_INVOKE_CAP_PROPS ), "mode" );
+		CHECK( mode && et->typeName == mode->typeName, "enum table typeName is the property's typeName pointer" );
+	}
 	for( const Reg& r : Registrations() )
 	{
 		if( r.path == enumName && r.capability == BLUE_INVOKE_CAP_ENUMS )
@@ -537,6 +557,26 @@ void TestDuplicates( const std::string& obj )
 	CHECK( BlueInvokeRegister( obj.c_str(), &dummy, BLUE_INVOKE_CAP_METHODS, &dummy ) == BLUE_INVOKE_REGISTER_DUPLICATE, "duplicate returns 1" );
 	CHECK( BlueInvokeDuplicateCount() == before + 1, "duplicate counted" );
 	CHECK( BlueInvokeFind( obj.c_str(), BLUE_INVOKE_CAP_METHODS ) == original, "first registration kept" );
+	// the refused one stays reachable: by its own classInfo, and in the duplicate listing
+	CHECK( BlueInvokeFindByInfo( &dummy, BLUE_INVOKE_CAP_METHODS ) == &dummy, "duplicate reachable by its classInfo" );
+	struct Seen
+	{
+		const std::string* path;
+		int hits;
+		uint32_t total;
+	} seen{ &obj, 0, 0 };
+	BlueInvokeForEachDuplicate(
+		[]( void* user, const char* path, const void* info, const char* cap, const void* table ) {
+			Seen* s = static_cast<Seen*>( user );
+			++s->total;
+			if( *s->path == path && info == &dummy && std::strcmp( cap, BLUE_INVOKE_CAP_METHODS ) == 0 && table == &dummy )
+			{
+				++s->hits;
+			}
+		},
+		&seen );
+	CHECK( seen.hits == 1 && seen.total == BlueInvokeDuplicateCount(), "ForEachDuplicate lists it (%u of %u)", seen.hits, seen.total );
+	BlueInvokeForEachDuplicate( nullptr, nullptr ); // tolerated
 	CHECK( BlueInvokeRegister( nullptr, nullptr, BLUE_INVOKE_CAP_METHODS, &dummy ) == BLUE_INVOKE_REGISTER_INVALID, "invalid registration" );
 }
 
@@ -618,7 +658,8 @@ int main()
 	const BlueInvokeClassTable* ot = Table( "invoke_test_otherid.InvokeTestObj", BLUE_INVOKE_CAP_METHODS );
 	CHECK( ot && std::strcmp( ot->buildId, "other" ) == 0 && std::strcmp( ot->buildId, BlueInvokeBuildId() ) != 0, "other build ID %s",
 		   ot ? ot->buildId : "(none)" );
-	CHECK( BlueInvokeFind( "invoke_test_otherid_MODE", BLUE_INVOKE_CAP_ENUMS ) != nullptr, "otherid enum" );
+	const BlueInvokeEnumTable* oe = static_cast<const BlueInvokeEnumTable*>( BlueInvokeFind( "invoke_test_otherid_MODE", BLUE_INVOKE_CAP_ENUMS ) );
+	CHECK( oe && oe->buildId && std::strcmp( oe->buildId, "other" ) == 0, "otherid enum carries its own build ID" );
 
 	if( self )
 	{
