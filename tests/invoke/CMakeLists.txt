@@ -37,7 +37,10 @@ target_compile_definitions(invoke_tests PRIVATE
     INVOKE_TEST_PYTHON_HOME="${BLUE_INVOKE_TEST_PYTHON_HOME}"
 )
 # Headers only from BlueExposure/CcpCore (IRoot's interface); the driver links no Blue code.
+# blue_invoke's directories first: CcpCore's may be an installed prefix holding an older
+# BlueInvokeConfig.h, which would otherwise shadow the generated one.
 target_include_directories(invoke_tests PRIVATE
+    $<TARGET_PROPERTY:blue_invoke,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:BlueExposure,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:CcpCore,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(invoke_tests PRIVATE blue_invoke Python3::Python ${CMAKE_DL_LIBS})

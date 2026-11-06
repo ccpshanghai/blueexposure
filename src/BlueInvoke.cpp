@@ -64,6 +64,11 @@ BLUE_INVOKE_API int BlueInvokeRegister( const char* classPath, const void* class
 	if( !inserted.second )
 	{
 		r.duplicates.push_back( e );
+		// A duplicate path with its own ClassInfo (another DSO's class) stays reachable by that info.
+		if( classInfo )
+		{
+			r.byInfo.emplace( std::make_pair( classInfo, e->capability ), e );
+		}
 		return BLUE_INVOKE_REGISTER_DUPLICATE;
 	}
 	r.order.push_back( e );
@@ -98,23 +103,36 @@ BLUE_INVOKE_API const void* BlueInvokeFindByInfo( const void* classInfo, const c
 	return it == r.byInfo.end() ? nullptr : it->second->table;
 }
 
+namespace
+{
+	void Visit( std::vector<const Entry*> Registry::*list, BlueInvokeForEachFn fn, void* user )
+	{
+		if( !fn )
+		{
+			return;
+		}
+		std::vector<const Entry*> snapshot;
+		{
+			Registry& r = R();
+			std::lock_guard<std::mutex> lock( r.m );
+			snapshot = r.*list;
+		}
+		// Called without the lock, so fn may call BlueInvokeFind. Entries are never freed.
+		for( const Entry* e : snapshot )
+		{
+			fn( user, e->classPath.c_str(), e->classInfo, e->capability.c_str(), e->table );
+		}
+	}
+}
+
 BLUE_INVOKE_API void BlueInvokeForEach( BlueInvokeForEachFn fn, void* user )
 {
-	if( !fn )
-	{
-		return;
-	}
-	std::vector<const Entry*> snapshot;
-	{
-		Registry& r = R();
-		std::lock_guard<std::mutex> lock( r.m );
-		snapshot = r.order;
-	}
-	// Called without the lock, so fn may call BlueInvokeFind. Entries are never freed.
-	for( const Entry* e : snapshot )
-	{
-		fn( user, e->classPath.c_str(), e->classInfo, e->capability.c_str(), e->table );
-	}
+	Visit( &Registry::order, fn, user );
+}
+
+BLUE_INVOKE_API void BlueInvokeForEachDuplicate( BlueInvokeForEachFn fn, void* user )
+{
+	Visit( &Registry::duplicates, fn, user );
 }
 
 BLUE_INVOKE_API const char* BlueInvokeBuildId( void )

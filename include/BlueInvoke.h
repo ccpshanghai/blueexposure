@@ -8,7 +8,7 @@
 //   invoke.methods.v1   BlueInvokeClassTable of BlueInvokeMethod entries
 //   invoke.props.v1     BlueInvokeClassTable of BlueInvokeProperty entries
 // and per enum, under its exposed name:
-//   invoke.enums.v1     the Be::VarChooser array itself (terminated by a null mKey)
+//   invoke.enums.v1     BlueInvokeEnumTable of BlueInvokeEnumValue entries, copied from the chooser
 // A table-format change adds a new capability name next to these; readers take the names they
 // know. Nothing here includes or calls Python. Upstream structs (ClassInfo, VarEntry, ...) are
 // untouched.
@@ -103,6 +103,8 @@ enum BlueInvokeStatus : int
 	BIS_READONLY,  // for readers: the property has no setter
 };
 
+// `result` / `out` must be cleared (BIV_NONE, release == nullptr) on entry: a thunk overwrites it
+// without releasing what it held. Use BlueInvokeValueClear between calls that reuse a value.
 typedef int ( *BlueInvokeMethodFn )( IRoot* self, const BlueInvokeValue* args, uint32_t argc, BlueInvokeValue* result, BlueInvokeError* err );
 typedef int ( *BlueInvokeGetFn )( IRoot* self, BlueInvokeValue* out, BlueInvokeError* err );
 typedef int ( *BlueInvokeSetFn )( IRoot* self, const BlueInvokeValue* in, BlueInvokeError* err );
@@ -163,10 +165,36 @@ struct BlueInvokeClassTable
 	uint32_t unsupported;        // entries with fn/get == nullptr (or a writable property without set)
 };
 
+// One value of an exposed enum (capability invoke.enums.v1). Copied from upstream's chooser array
+// at registration, so readers never depend on Be::VarChooser's layout. Strings point into the
+// registering DSO's static data.
+struct BlueInvokeEnumValue
+{
+	const char* name;
+	int64_t value;
+	const char* description; // may be null or empty
+};
+
+// The invoke.enums.v1 table. Its first 24 bytes match BlueInvokeClassTable (magic, sizeofValue,
+// sizeofEntry, count, buildId), so one header check covers every capability.
+struct BlueInvokeEnumTable
+{
+	uint32_t magic;       // BLUE_INVOKE_MAGIC
+	uint32_t sizeofValue; // sizeof(BlueInvokeValue)
+	uint32_t sizeofEntry; // sizeof(BlueInvokeEnumValue)
+	uint32_t count;
+	const char* buildId;                // BLUE_INVOKE_BUILD_ID as compiled into the registering DSO
+	const BlueInvokeEnumValue* values;  // count values, in exposure order
+	const char* typeName;               // the C++ enum's compile-time name (= BlueInvokeValue::type for BIV_ENUM)
+	const std::type_info* enumType;     // = BlueInvokeMethod::argEnumTypes / BlueInvokeProperty::enumType
+};
+
 enum : int
 {
 	BLUE_INVOKE_REGISTER_OK = 0,
-	BLUE_INVOKE_REGISTER_DUPLICATE = 1, // the first registration is kept; this one is recorded
+	BLUE_INVOKE_REGISTER_DUPLICATE = 1, // the first registration is kept by path; this one is recorded and
+										// reachable through BlueInvokeForEachDuplicate (and FindByInfo, when
+										// its classInfo is not already taken)
 	BLUE_INVOKE_REGISTER_INVALID = 2,   // null classPath, capability or table
 };
 
@@ -179,6 +207,8 @@ BLUE_INVOKE_API const void* BlueInvokeFindByInfo( const void* classInfo, const c
 BLUE_INVOKE_API void BlueInvokeForEach( BlueInvokeForEachFn fn, void* user );
 BLUE_INVOKE_API const char* BlueInvokeBuildId( void );
 BLUE_INVOKE_API uint32_t BlueInvokeDuplicateCount( void );
+// Same callback as ForEach, over the registrations refused as duplicates, in registration order.
+BLUE_INVOKE_API void BlueInvokeForEachDuplicate( BlueInvokeForEachFn fn, void* user );
 }
 
 // Releases what a thunk allocated in *v and resets it to BIV_NONE.
@@ -204,6 +234,11 @@ static_assert( sizeof( BlueInvokeValue ) == 88, "BlueInvokeValue layout changed;
 static_assert( offsetof( BlueInvokeValue, tag ) == 0 && offsetof( BlueInvokeValue, count ) == 4 && offsetof( BlueInvokeValue, v ) == 8 &&
 				   offsetof( BlueInvokeValue, release ) == 72 && offsetof( BlueInvokeValue, type ) == 80,
 			   "BlueInvokeValue layout changed; cb_value must follow" );
+static_assert( sizeof( BlueInvokeEnumValue ) == 24 && sizeof( BlueInvokeEnumTable ) == 48 &&
+				   offsetof( BlueInvokeEnumTable, buildId ) == offsetof( BlueInvokeClassTable, buildId ) &&
+				   offsetof( BlueInvokeEnumTable, values ) == 24 && offsetof( BlueInvokeEnumTable, typeName ) == 32 &&
+				   offsetof( BlueInvokeEnumTable, enumType ) == 40,
+			   "BlueInvokeEnumTable layout changed; the C ABI reader must follow" );
 #endif
 
 #if !defined( BLUE_INVOKE_C_API_ONLY )
@@ -505,7 +540,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 	static constexpr uint32_t tag = BIV_INT;
 	static int In( const BlueInvokeValue& v, T& s, BlueInvokeError* e, int arg )
 	{
-		if( v.tag == BIV_INT )
+		if( v.tag == BIV_INT || v.tag == BIV_BOOL ) // bool: Python's True/False are ints
 		{
 			if( v.v.i < static_cast<int64_t>( std::numeric_limits<T>::min() ) || v.v.i > static_cast<int64_t>( std::numeric_limits<T>::max() ) )
 			{
@@ -550,7 +585,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 			s = static_cast<T>( v.v.u );
 			return BIS_OK;
 		}
-		if( v.tag == BIV_INT )
+		if( v.tag == BIV_INT || v.tag == BIV_BOOL ) // bool: Python's True/False are ints
 		{
 			if( v.v.i < 0 || static_cast<uint64_t>( v.v.i ) > static_cast<uint64_t>( std::numeric_limits<T>::max() ) )
 			{
@@ -578,6 +613,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_floating_point<T>::value>> : B
 		switch( v.tag )
 		{
 		case BIV_DOUBLE: s = static_cast<T>( v.v.d ); return BIS_OK;
+		case BIV_BOOL: // Python's True/False are ints
 		case BIV_INT: s = static_cast<T>( v.v.i ); return BIS_OK;
 		case BIV_UINT: s = static_cast<T>( v.v.u ); return BIS_OK;
 		default: return BlueInvokeTypeError( e, arg, "double", v.tag );
@@ -603,6 +639,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_enum<T>::value>> : BlueInvokeC
 		switch( v.tag )
 		{
 		case BIV_ENUM:
+		case BIV_BOOL: // Python's True/False are ints
 		case BIV_INT: s = static_cast<T>( v.v.i ); return BIS_OK;
 		case BIV_UINT: s = static_cast<T>( v.v.u ); return BIS_OK;
 		default: return BlueInvokeTypeError( e, arg, "enum", v.tag );
@@ -1696,6 +1733,36 @@ constexpr BlueInvokeProperty BlueInvokeMakeProperty( const char* name )
 	return p;
 }
 
+// EnumTypeRegistration's hook: copies upstream's chooser array (terminated by mKey == nullptr,
+// value in mValue.mLong) into a leaked BlueInvokeEnumTable. Runs once per exposed enum and DSO.
+template <typename T>
+inline void BlueInvokeRegisterEnum( const char* typeName, const Be::VarChooser* chooser, const char* buildId )
+{
+	if( !typeName || !chooser )
+	{
+		return;
+	}
+	uint32_t n = 0;
+	while( chooser[n].mKey )
+	{
+		++n;
+	}
+	BlueInvokeEnumValue* values = new BlueInvokeEnumValue[n ? n : 1];
+	for( uint32_t i = 0; i < n; ++i )
+	{
+		values[i] = BlueInvokeEnumValue{ chooser[i].mKey, static_cast<int64_t>( chooser[i].mValue.mLong ), chooser[i].mDescription };
+	}
+	const BlueInvokeEnumTable* t = new BlueInvokeEnumTable{ BLUE_INVOKE_MAGIC,
+															static_cast<uint32_t>( sizeof( BlueInvokeValue ) ),
+															static_cast<uint32_t>( sizeof( BlueInvokeEnumValue ) ),
+															n,
+															buildId,
+															values,
+															BlueInvokeTypeName<T>::value,
+															&typeid( T ) };
+	BlueInvokeRegister( typeName, &typeid( T ), BLUE_INVOKE_CAP_ENUMS, t );
+}
+
 #if defined( __GNUC__ ) || defined( __clang__ )
 #pragma GCC visibility pop
 #endif
@@ -1707,10 +1774,14 @@ constexpr BlueInvokeProperty BlueInvokeMakeProperty( const char* name )
 // then be unique too, which a hidden type would prevent.
 //--------------------------------------------------------------------------------------------
 
+// The type is default-visible, its functions are not: each DSO uses the Add/FinishClass compiled
+// against its own copy of this header, and none can be interposed by another DSO's copy.
 #if defined( __GNUC__ ) || defined( __clang__ )
 #define BLUE_INVOKE_VISIBLE_TYPE __attribute__( ( visibility( "default" ) ) )
+#define BLUE_INVOKE_HIDDEN_FN __attribute__( ( visibility( "hidden" ) ) )
 #else
 #define BLUE_INVOKE_VISIBLE_TYPE
+#define BLUE_INVOKE_HIDDEN_FN
 #endif
 
 struct BLUE_INVOKE_VISIBLE_TYPE BlueInvokeClassBuilder
@@ -1720,7 +1791,8 @@ struct BLUE_INVOKE_VISIBLE_TYPE BlueInvokeClassBuilder
 	uint32_t methodsUnsupported = 0;
 	uint32_t propsUnsupported = 0;
 
-	void Add( const BlueInvokeMethod* m )
+	BLUE_INVOKE_HIDDEN_FN BlueInvokeClassBuilder() {}
+	BLUE_INVOKE_HIDDEN_FN void Add( const BlueInvokeMethod* m )
 	{
 		methods.push_back( m );
 		if( !m->fn )
@@ -1728,7 +1800,7 @@ struct BLUE_INVOKE_VISIBLE_TYPE BlueInvokeClassBuilder
 			++methodsUnsupported;
 		}
 	}
-	void Add( const BlueInvokeProperty* p )
+	BLUE_INVOKE_HIDDEN_FN void Add( const BlueInvokeProperty* p )
 	{
 		props.push_back( p );
 		if( !p->get || ( !( p->flags & BIP_READONLY ) && !p->set ) )
@@ -1740,7 +1812,7 @@ struct BLUE_INVOKE_VISIBLE_TYPE BlueInvokeClassBuilder
 
 // Called once per class at the end of ExposeToBlue. Tables and the path are leaked on purpose:
 // they live as long as the process (N8). The builder's vectors are never touched again.
-inline void BlueInvokeFinishClass( BlueInvokeClassBuilder& b, const char* module, const char* name, const void* classInfo, const char* buildId )
+BLUE_INVOKE_HIDDEN_FN inline void BlueInvokeFinishClass( BlueInvokeClassBuilder& b, const char* module, const char* name, const void* classInfo, const char* buildId )
 {
 	if( b.methods.empty() && b.props.empty() )
 	{
@@ -1826,7 +1898,7 @@ inline void BlueInvokeFinishClass( BlueInvokeClassBuilder& b, const char* module
 
 // EnumTypeRegistration's constructor, before `while( c->mKey )` advances the chooser pointer.
 #define BLUE_INVOKE_REGISTER_ENUM( typeName, T, chooser ) \
-	BlueInvokeRegister( ( typeName ), &typeid( T ), BLUE_INVOKE_CAP_ENUMS, ( chooser ) )
+	BlueInvokeRegisterEnum<T>( ( typeName ), ( chooser ), BLUE_INVOKE_BUILD_ID )
 
 #endif // BLUE_INVOKE_DISABLE
 
