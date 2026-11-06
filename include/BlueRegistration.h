@@ -6,6 +6,7 @@
 
 #include "BlueTypes.h"
 #include "BlueExposureHelpers.h"
+#include "BlueInvoke.h"
 #include <vector>
 #include <map>
 
@@ -279,6 +280,7 @@ struct EnumTypeRegistration
 			registrationType,
 			&EnumRegistration<T>::GetValues );
 		BlueRegistration::GetEnumRegs().insert( EnumTypeRegistrationValues( s, v ) );
+		BLUE_INVOKE_REGISTER_ENUM( typeName, T, c );
 
 		while( c->mKey )
 		{

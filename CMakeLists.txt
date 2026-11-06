@@ -58,6 +58,7 @@ set(PUBLIC_HEADER_FILES
     include/BlueExtractArgument.h
     include/BlueExtractArgumentPython.h
     include/BlueFunctionTraits.h
+    include/BlueInvoke.h
     include/BlueListUtil.h
     include/BlueMemberFunctionAsCallable.h
     include/BlueMemberFunctionTraits.h
@@ -114,6 +115,54 @@ target_include_directories(BlueExposure
         $<INSTALL_INTERFACE:include>
 )
 
+# --- Invoke hook (carbon-bind): libblue_invoke and the generated BlueInvokeConfig.h -----------
+option(BLUE_INVOKE_DISABLE "Compile the Invoke hook statements in the exposure macros away" OFF)
+option(BLUE_INVOKE_TESTS "Build the Linux-capable tests/invoke suite (independent of BUILD_TESTING)" OFF)
+
+# Build ID = content hash, not a git revision (ports build from an export without .git): SHA-256
+# over every public header and src/BlueInvoke.cpp, the compiler and the switch. Editing any of
+# them re-runs configure, so the ID changes exactly when consumers must be rebuilt.
+set(_blue_invoke_id_inputs ${PUBLIC_HEADER_FILES} include/BlueInvokeConfig.h.in src/BlueInvoke.cpp)
+list(SORT _blue_invoke_id_inputs)
+set(_blue_invoke_id_text "")
+foreach(_f IN LISTS _blue_invoke_id_inputs)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${_f}" _h)
+    string(APPEND _blue_invoke_id_text "${_f}=${_h}\n")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_f}")
+endforeach()
+if(BLUE_INVOKE_DISABLE)
+    set(BLUE_INVOKE_DISABLE_VALUE 1)
+else()
+    set(BLUE_INVOKE_DISABLE_VALUE 0)
+endif()
+string(APPEND _blue_invoke_id_text "compiler=${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}\ndisable=${BLUE_INVOKE_DISABLE_VALUE}\n")
+string(SHA256 _blue_invoke_id "${_blue_invoke_id_text}")
+string(SUBSTRING "${_blue_invoke_id}" 0 16 BLUE_INVOKE_BUILD_ID)
+set(BLUE_INVOKE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/blue_invoke_generated")
+configure_file(include/BlueInvokeConfig.h.in "${BLUE_INVOKE_GENERATED_DIR}/BlueInvokeConfig.h" @ONLY)
+message(STATUS "BlueInvoke: build ID ${BLUE_INVOKE_BUILD_ID}, BLUE_INVOKE_DISABLE=${BLUE_INVOKE_DISABLE_VALUE}")
+
+add_library(blue_invoke SHARED src/BlueInvoke.cpp include/BlueInvoke.h "${BLUE_INVOKE_GENERATED_DIR}/BlueInvokeConfig.h")
+set_target_properties(blue_invoke PROPERTIES
+    OUTPUT_NAME blue_invoke
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+target_compile_features(blue_invoke PUBLIC cxx_std_17)
+target_include_directories(blue_invoke
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${BLUE_INVOKE_GENERATED_DIR}>
+        $<INSTALL_INTERFACE:include>
+)
+# Every consumer DSO of BlueExposure gets a DT_NEEDED on libblue_invoke (one registry per process).
+target_link_libraries(BlueExposure PUBLIC blue_invoke)
+
+if(BLUE_INVOKE_TESTS)
+    enable_testing()
+    add_subdirectory(tests/invoke)
+endif()
+
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     option(BUILD_TESTING "Build tests. Enabled by default." ON)
     include(CTest)
@@ -125,14 +174,15 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
 
     if (INSTALL_TO_MONOLITH)
         install(
-                TARGETS BlueExposure
+                TARGETS BlueExposure blue_invoke
                 EXPORT BlueExposureTargets
                 CONFIGURATIONS ${CMAKE_CONFIGURATION_TYPES}
                 ARCHIVE DESTINATION lib/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
+                LIBRARY DESTINATION lib/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
                 RUNTIME DESTINATION bin/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
         )
         # Install rule for available public headers
-        install(FILES ${PUBLIC_HEADER_FILES} DESTINATION include)
+        install(FILES ${PUBLIC_HEADER_FILES} "${BLUE_INVOKE_GENERATED_DIR}/BlueInvokeConfig.h" DESTINATION include)
 
         configure_ccp_vendor_config_file(
                 TARGET BlueExposure
@@ -141,16 +191,18 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         )
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/BlueExposureConfig.cmake DESTINATION .)
     else() # VCPKG install mode
-        # Install static library archive
+        # Install static library archive and the shared Invoke registry
         install(
-                TARGETS BlueExposure
+                TARGETS BlueExposure blue_invoke
                 EXPORT BlueExposureTargets
                 CONFIGURATIONS ${CMAKE_CONFIGURATION_TYPES}
                 ARCHIVE DESTINATION lib/
+                LIBRARY DESTINATION lib/
+                RUNTIME DESTINATION bin/
         )
 
         # Install public header files
-        install(FILES ${PUBLIC_HEADER_FILES} DESTINATION include)
+        install(FILES ${PUBLIC_HEADER_FILES} "${BLUE_INVOKE_GENERATED_DIR}/BlueInvokeConfig.h" DESTINATION include)
 
         # Install target export configuration
         install(
