@@ -347,7 +347,7 @@ void TestRoundTrips( const BlueInvokeClassTable* t, IRoot* self, IRoot* other )
 	}
 
 	Invoke( c, Method( t, "EchoMode" ), self, { Enum( 5 ) } );
-	CHECK( c.rc == BIS_OK && c.r.tag == BIV_ENUM && c.r.v.i == 5 && c.r.type && std::strstr( c.r.type, "Mode" ), "enum out type %s",
+	CHECK( c.rc == BIS_OK && c.r.tag == BIV_ENUM && c.r.v.i == 5 && c.r.type && std::strcmp( c.r.type, "InvokeTestObj::Mode" ) == 0, "enum out type %s",
 		   c.r.type ? c.r.type : "(null)" );
 	Invoke( c, Method( t, "EchoMode" ), self, { Int( 9 ) } );
 	CHECK( c.rc == BIS_OK && c.r.v.i == 9, "enum from int" );
@@ -515,7 +515,7 @@ void TestProperties( const BlueInvokeClassTable* p, IRoot* self )
 	CHECK( name->set( self, &v, &e ) == BIS_FAILED && std::strstr( e.message, "empty" ), "name set failure: %s", e.message );
 
 	const BlueInvokeProperty* mode = Property( p, "mode" );
-	CHECK( mode && mode->typeTag == BIV_ENUM && mode->enumType && mode->typeName && std::strstr( mode->typeName, "Mode" ), "enum property" );
+	CHECK( mode && mode->typeTag == BIV_ENUM && mode->enumType && mode->typeName && std::strcmp( mode->typeName, "InvokeTestObj::Mode" ) == 0, "enum property" );
 	v = Enum( 9 );
 	CHECK( mode->set( self, &v, &e ) == BIS_OK && mode->get( self, &out, &e ) == BIS_OK && out.tag == BIV_ENUM && out.v.i == 9, "mode rw" );
 
@@ -541,11 +541,16 @@ void TestEnumsAndHashes( const Lib& lib, const char* module, const BlueInvokeCla
 		CHECK( v && std::strcmp( v[0].name, "MODE_A" ) == 0 && std::strcmp( v[1].name, "MODE_B" ) == 0 && std::strcmp( v[2].name, "MODE_C" ) == 0 &&
 				   v[0].value == 0 && v[1].value == 5 && v[2].value == 9 && v[1].description && std::strcmp( v[1].description, "B" ) == 0,
 			   "enum names, values and descriptions" );
-		CHECK( et->enumType && *et->enumType == *modeType && et->typeName && std::strstr( et->typeName, "Mode" ), "enum table type %s",
+		CHECK( et->enumType && *et->enumType == *modeType && et->typeName && std::strcmp( et->typeName, "InvokeTestObj::Mode" ) == 0, "enum table type %s",
 			   et->typeName ? et->typeName : "(null)" );
 		const BlueInvokeProperty* mode = Property( Table( ( std::string( module ) + ".InvokeTestObj" ).c_str(), BLUE_INVOKE_CAP_PROPS ), "mode" );
 		CHECK( mode && et->typeName == mode->typeName, "enum table typeName is the property's typeName pointer" );
 	}
+	// an enum without a declared canonical name: the table reports the registration's spelling
+	const std::string levelName = std::string( module ) + "_LEVEL";
+	const BlueInvokeEnumTable* lt = static_cast<const BlueInvokeEnumTable*>( BlueInvokeFind( levelName.c_str(), BLUE_INVOKE_CAP_ENUMS ) );
+	CHECK( lt && lt->count == 2 && lt->typeName && std::strcmp( lt->typeName, "InvokeTestObj::Level" ) == 0, "undeclared enum table type %s",
+		   lt && lt->typeName ? lt->typeName : "(null)" );
 	for( const Reg& r : Registrations() )
 	{
 		if( r.path == enumName && r.capability == BLUE_INVOKE_CAP_ENUMS )
@@ -559,7 +564,7 @@ void TestEnumsAndHashes( const Lib& lib, const char* module, const BlueInvokeCla
 			   takeOther->argEnumTypes[1] && *takeOther->argEnumTypes[1] == *otherType,
 		   "enum parameter type_info" );
 	CHECK( takeMode && takeOther && takeMode->sigHash != takeOther->sigHash, "sigHash differs by enum type" );
-	CHECK( takeMode && takeMode->argTypeNames[1] && std::strstr( takeMode->argTypeNames[1], "Mode" ), "enum parameter name %s",
+	CHECK( takeMode && takeMode->argTypeNames[1] && std::strcmp( takeMode->argTypeNames[1], "InvokeTestObj::Mode" ) == 0, "enum parameter name %s",
 		   takeMode && takeMode->argTypeNames[1] ? takeMode->argTypeNames[1] : "(null)" );
 	const BlueInvokeMethod* echoInt = Method( t, "EchoInt" );
 	const BlueInvokeMethod* thr = Method( t, "Throw" );
@@ -647,7 +652,7 @@ int main()
 	for( size_t i = hookedCount; i < afterUnhooked.size(); ++i )
 	{
 		const Reg& r = afterUnhooked[i];
-		if( r.path.rfind( "invoke_test_unhooked.InvokeTest", 0 ) == 0 || r.path == "invoke_test_unhooked_MODE" )
+		if( r.path.rfind( "invoke_test_unhooked.InvokeTest", 0 ) == 0 || r.path == "invoke_test_unhooked_MODE" || r.path == "invoke_test_unhooked_LEVEL" )
 		{
 			++fromTestSources;
 			std::fprintf( stderr, "unhooked entry %s %s\n", r.path.c_str(), r.capability.c_str() );

@@ -44,6 +44,11 @@ struct IRoot;
 
 #define BLUE_INVOKE_MAGIC 0x31564942u // "BIV1": the table format of this header
 
+// The hook's binary contract: table and entry layouts, tags, conversions, the canonical-name rule
+// and the sigHash recipe. Bump it with any change to one of them. It is the first input of
+// BLUE_INVOKE_BUILD_ID (CMakeLists.txt reads this line).
+#define BLUE_INVOKE_ABI_VERSION 1
+
 #define BLUE_INVOKE_CAP_METHODS "invoke.methods.v1"
 #define BLUE_INVOKE_CAP_PROPS "invoke.props.v1"
 #define BLUE_INVOKE_CAP_ENUMS "invoke.enums.v1"
@@ -134,7 +139,7 @@ struct BlueInvokeMethod
 	BlueInvokeMethodFn fn; // nullptr: unsupported signature
 	uint32_t arity;        // as callers see it (an out-parameter is not counted)
 	uint32_t numOptional;
-	uint64_t sigHash; // FNV-1a over tags and type hashes, computed by the compiler
+	uint64_t sigHash; // FNV-1a over tags and canonical-name hashes, computed at compile time
 	uint32_t returnTag;
 	uint32_t flags;
 	uint32_t argTags[BLUE_INVOKE_MAX_ARGS];
@@ -185,7 +190,7 @@ struct BlueInvokeEnumTable
 	uint32_t count;
 	const char* buildId;                // BLUE_INVOKE_BUILD_ID as compiled into the registering DSO
 	const BlueInvokeEnumValue* values;  // count values, in exposure order
-	const char* typeName;               // the C++ enum's compile-time name (= BlueInvokeValue::type for BIV_ENUM)
+	const char* typeName;               // canonical name if declared (= BlueInvokeValue::type for BIV_ENUM), else as written at BLUE_REGISTER_ENUM
 	const std::type_info* enumType;     // = BlueInvokeMethod::argEnumTypes / BlueInvokeProperty::enumType
 };
 
@@ -249,6 +254,7 @@ static_assert( sizeof( BlueInvokeEnumValue ) == 24 && sizeof( BlueInvokeEnumTabl
 
 #include "BlueTypes.h"
 #include "BlueSharedString.h"
+#include "BlueInvokeName.h"
 
 #include <array>
 #include <cstdarg>
@@ -368,51 +374,27 @@ constexpr uint64_t BlueInvokeFnvMix( uint64_t h, uint64_t v )
 	return h;
 }
 
+// The canonical name of an enum or Blue class (BlueInvokeName.h) and its FNV-1a hash: the
+// per-type input of sigHash and the name every entry reports. Declared in the source, so it is the
+// same on every compiler; a type without a declared name stops the build here.
 template <typename T>
-constexpr const char* BlueInvokeRawTypeName()
+struct BlueInvokeCanonicalName
 {
-#if defined( _MSC_VER ) && !defined( __clang__ )
-	return __FUNCSIG__; // not verified on MSVC
-#else
-	return __PRETTY_FUNCTION__;
-#endif
-}
-
-constexpr std::string_view BlueInvokeExtractTypeName( std::string_view f )
-{
-#if defined( _MSC_VER ) && !defined( __clang__ )
-	// "const char *__cdecl BlueInvokeRawTypeName<struct Foo>(void)"
-	const size_t b = f.find( "BlueInvokeRawTypeName<" ) + 22;
-	const size_t e = f.rfind( ">(void)" );
-#else
-	// GCC: "constexpr const char* BlueInvokeRawTypeName() [with T = Foo]"; clang: "... [T = Foo]"
-	const size_t b = f.find( "T = " ) + 4;
-	const size_t e = f.rfind( ']' );
-#endif
-	return f.substr( b, e - b );
-}
-
-template <typename T>
-struct BlueInvokeTypeNameView
-{
-	static constexpr std::string_view view = BlueInvokeExtractTypeName( BlueInvokeRawTypeName<T>() );
+	using Chars = decltype( BlueInvokeCanonicalNameOf( BlueInvokeTypeTag<T>{} ) ); // ADL at the point of instantiation
+	static_assert( !std::is_same<Chars, BlueInvokeNoName>::value,
+				   "BlueInvoke: this enum or Blue class has no canonical name. Blue classes and interfaces get one from "
+				   "BLUE_DECLARE / BLUE_CLASS / BLUE_INTERFACE; otherwise write BLUE_INVOKE_CANONICAL_NAME( Type, \"Name\" ) "
+				   "after the type's declaration (BlueInvokeName.h)" );
+	static constexpr const char* value = Chars::value;
+	static constexpr uint64_t hash = BlueInvokeFnv( std::string_view( Chars::value ) );
 };
 
-template <typename T, size_t... I>
-constexpr std::array<char, sizeof...( I ) + 1> BlueInvokeMakeTypeName( std::index_sequence<I...> )
-{
-	return { { BlueInvokeTypeNameView<T>::view[I]..., '\0' } };
-}
-
-// A NUL-terminated compile-time name of T and its FNV-1a hash: the per-type input of sigHash.
+// Whether T has a declared canonical name (enum tables fall back to their registration spelling).
 template <typename T>
-struct BlueInvokeTypeName
+constexpr bool BlueInvokeHasCanonicalName()
 {
-	static constexpr std::array<char, BlueInvokeTypeNameView<T>::view.size() + 1> storage =
-		BlueInvokeMakeTypeName<T>( std::make_index_sequence<BlueInvokeTypeNameView<T>::view.size()>() );
-	static constexpr const char* value = storage.data();
-	static constexpr uint64_t hash = BlueInvokeFnv( BlueInvokeTypeNameView<T>::view );
-};
+	return !std::is_same<decltype( BlueInvokeCanonicalNameOf( BlueInvokeTypeTag<T>{} ) ), BlueInvokeNoName>::value;
+}
 
 //--------------------------------------------------------------------------------------------
 // Traits. Completeness is checked before std::is_base_of ever sees a type (an incomplete T is a
@@ -626,13 +608,13 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_floating_point<T>::value>> : B
 	}
 };
 
-// enums: identity by type_info (equality is valid across DSOs), hash by compile-time name
+// enums: identity by type_info (equality is valid across DSOs), hash by canonical name
 template <typename T>
 struct BlueInvokeConv<T, std::enable_if_t<std::is_enum<T>::value>> : BlueInvokeConvBase<T>
 {
 	static constexpr uint32_t tag = BIV_ENUM;
-	static constexpr uint64_t typeHash = BlueInvokeTypeName<T>::hash;
-	static constexpr const char* typeName = BlueInvokeTypeName<T>::value;
+	static constexpr uint64_t typeHash = BlueInvokeCanonicalName<T>::hash;
+	static constexpr const char* typeName = BlueInvokeCanonicalName<T>::value;
 	static constexpr const std::type_info* enumType = &typeid( T );
 	static int In( const BlueInvokeValue& v, T& s, BlueInvokeError* e, int arg )
 	{
@@ -933,8 +915,8 @@ struct BlueInvokeObjectConv
 	static constexpr bool in = true;
 	static constexpr bool out = true;
 	static constexpr uint32_t tag = BIV_OBJECT;
-	static constexpr uint64_t typeHash = BlueInvokeTypeName<U>::hash;
-	static constexpr const char* typeName = BlueInvokeTypeName<U>::value;
+	static constexpr uint64_t typeHash = BlueInvokeCanonicalName<U>::hash;
+	static constexpr const char* typeName = BlueInvokeCanonicalName<U>::value;
 	static constexpr const std::type_info* enumType = nullptr;
 
 	static int InPtr( const BlueInvokeValue& v, T*& s, BlueInvokeError* e, int arg )
@@ -1118,9 +1100,11 @@ struct BlueInvokeMemFn
 	static constexpr bool valid = false;
 };
 
-#define BLUE_INVOKE_MEMFN_TRAITS( QUAL ) \
+// Variadic, so the unqualified form is an empty argument list rather than an empty argument
+// (MSVC C4003).
+#define BLUE_INVOKE_MEMFN_TRAITS( ... ) \
 	template <typename R, typename C, typename... A> \
-	struct BlueInvokeMemFn<R ( C::* )( A... ) QUAL> \
+	struct BlueInvokeMemFn<R ( C::* )( A... ) __VA_ARGS__> \
 	{ \
 		static constexpr bool valid = true; \
 		using Ret = R; \
@@ -1733,10 +1717,25 @@ constexpr BlueInvokeProperty BlueInvokeMakeProperty( const char* name )
 	return p;
 }
 
+template <typename T>
+constexpr const char* BlueInvokeEnumTypeName( const char* sourceName )
+{
+	if constexpr( BlueInvokeHasCanonicalName<T>() )
+	{
+		return BlueInvokeCanonicalName<T>::value;
+	}
+	else
+	{
+		return sourceName;
+	}
+}
+
 // EnumTypeRegistration's hook: copies upstream's chooser array (terminated by mKey == nullptr,
 // value in mValue.mLong) into a leaked BlueInvokeEnumTable. Runs once per exposed enum and DSO.
+// The table's typeName is T's canonical name when one is declared (always, for an enum used in a
+// hooked signature), otherwise `sourceName`: T as written at BLUE_REGISTER_ENUM.
 template <typename T>
-inline void BlueInvokeRegisterEnum( const char* typeName, const Be::VarChooser* chooser, const char* buildId )
+inline void BlueInvokeRegisterEnum( const char* typeName, const Be::VarChooser* chooser, const char* buildId, const char* sourceName )
 {
 	if( !typeName || !chooser )
 	{
@@ -1758,7 +1757,7 @@ inline void BlueInvokeRegisterEnum( const char* typeName, const Be::VarChooser* 
 															n,
 															buildId,
 															values,
-															BlueInvokeTypeName<T>::value,
+															BlueInvokeEnumTypeName<T>( sourceName ),
 															&typeid( T ) };
 	BlueInvokeRegister( typeName, &typeid( T ), BLUE_INVOKE_CAP_ENUMS, t );
 }
@@ -1857,7 +1856,7 @@ BLUE_INVOKE_HIDDEN_FN inline void BlueInvokeFinishClass( BlueInvokeClassBuilder&
 #define BLUE_INVOKE_ADD_PROPERTY( nameString, getterFunction, setterFunction ) do {} while( 0 )
 #define BLUE_INVOKE_ADD_PROPERTY_RO( nameString, getterFunction ) do {} while( 0 )
 #define BLUE_INVOKE_END_CLASS( clsid, classInfo ) do {} while( 0 )
-#define BLUE_INVOKE_REGISTER_ENUM( typeName, T, chooser ) do {} while( 0 )
+#define BLUE_INVOKE_REGISTER_ENUM( typeName, T, chooser, sourceName ) do {} while( 0 )
 
 #else
 
@@ -1897,8 +1896,8 @@ BLUE_INVOKE_HIDDEN_FN inline void BlueInvokeFinishClass( BlueInvokeClassBuilder&
 	BlueInvokeFinishClass( s_blueInvoke, ( clsid ).GetModule(), ( clsid ).GetName(), ( classInfo ), BLUE_INVOKE_BUILD_ID )
 
 // EnumTypeRegistration's constructor, before `while( c->mKey )` advances the chooser pointer.
-#define BLUE_INVOKE_REGISTER_ENUM( typeName, T, chooser ) \
-	BlueInvokeRegisterEnum<T>( ( typeName ), ( chooser ), BLUE_INVOKE_BUILD_ID )
+#define BLUE_INVOKE_REGISTER_ENUM( typeName, T, chooser, sourceName ) \
+	BlueInvokeRegisterEnum<T>( ( typeName ), ( chooser ), BLUE_INVOKE_BUILD_ID, ( sourceName ) )
 
 #endif // BLUE_INVOKE_DISABLE
 

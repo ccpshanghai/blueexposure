@@ -11,6 +11,7 @@
 
 #include <CcpCore.h>
 #include "BlueScriptValue.h"
+#include "BlueInvokeName.h"
 
 #if !BLUE_WITH_PYTHON
 #ifndef __ANDROID__
@@ -455,13 +456,17 @@ template<typename T> const Be::IID& BlueInterfaceIID();
 
 // Declare an interface without the smart pointer typedef
 // This is needed to declare IRoot so it can be used in further definitions.
+// Each also declares the Invoke hook's canonical name of the type: the macro argument, as Blue
+// registers it (BlueInvokeName.h).
 #define BLUE_DECLARE_INTERFACE_NO_PTR(_interface)											\
+	BLUE_INVOKE_CANONICAL_NAME( _interface, #_interface );									\
 	const Be::IID& Get##_interface##IID();													\
 	template<> const Be::IID& BlueInterfaceIID< _interface >()
 
 // Declare an interface without the smart pointer typedef
 // This is needed to declare IRoot so it can be used in further definitions.
 #define BLUE_DECLARE_INTERFACE_NO_PTR_EXPORT(_interface) \
+	BLUE_INVOKE_CANONICAL_NAME( _interface, #_interface ); \
 	BLUEIMPORT const Be::IID& Get##_interface##IID(); \
 	template<> BLUEIMPORT const Be::IID& BlueInterfaceIID<_interface>()
 

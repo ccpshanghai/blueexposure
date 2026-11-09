@@ -36,6 +36,13 @@ public:
 		OTHER_X = 1,
 		OTHER_Y = 2,
 	};
+	// Registered (BLUE_REGISTER_ENUM) but in no hooked signature and without a canonical name: its
+	// enum table reports the spelling written at the registration.
+	enum Level
+	{
+		LEVEL_LOW = 1,
+		LEVEL_HIGH = 2,
+	};
 
 	InvokeTestObj( IRoot* lockobj = nullptr );
 
@@ -116,6 +123,10 @@ public:
 };
 
 TYPEDEF_BLUECLASS( InvokeTestObj );
+
+// Enums in hooked signatures declare their canonical name (BlueInvokeName.h); Level does not.
+BLUE_INVOKE_CANONICAL_NAME( InvokeTestObj::Mode, "InvokeTestObj::Mode" );
+BLUE_INVOKE_CANONICAL_NAME( InvokeTestObj::Other, "InvokeTestObj::Other" );
 
 BLUE_CLASS( InvokeTestDerived ) : public InvokeTestObj
 {
