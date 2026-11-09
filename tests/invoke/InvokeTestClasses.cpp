@@ -17,7 +17,11 @@ const char* g_moduleName = INVOKE_TEST_MODULE;
 #include <stdexcept>
 #include <typeinfo>
 
+#ifdef _WIN32
+#define INVOKE_TEST_EXPORT extern "C" __declspec( dllexport )
+#else
 #define INVOKE_TEST_EXPORT extern "C" __attribute__( ( visibility( "default" ) ) )
+#endif
 
 BLUE_DEFINE( InvokeTestObj );
 BLUE_DEFINE( InvokeTestDerived );

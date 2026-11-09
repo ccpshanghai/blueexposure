@@ -8,8 +8,8 @@
 #   invoke_test_classes   hooked, module "invoke_test_classes"
 #   invoke_test_unhooked  BLUE_INVOKE_DISABLE=1: must register nothing
 #   invoke_test_otherid   BLUE_INVOKE_BUILD_ID="other": tables must carry a different build ID
-# invoke_tests initialises Python (exposure runs at static init and needs it), dlopen()s them and
-# checks everything through the C API.
+# invoke_tests initialises Python (exposure runs at static init and needs it), loads them (dlopen,
+# LoadLibrary on Windows) and checks everything through the C API.
 
 foreach(_variant classes unhooked otherid)
     set(_t invoke_test_${_variant})
@@ -23,8 +23,13 @@ target_compile_definitions(invoke_test_otherid PRIVATE BLUE_INVOKE_BUILD_ID="oth
 
 # The embedded interpreter's home: the tree that provides libpython (never a system Python).
 if(NOT BLUE_INVOKE_TEST_PYTHON_HOME)
-    list(GET Python3_LIBRARY_DIRS 0 _py_libdir)
-    get_filename_component(BLUE_INVOKE_TEST_PYTHON_HOME "${_py_libdir}" DIRECTORY)
+    if(WIN32)
+        # vcpkg's Windows layout: python.exe, Lib/ and DLLs/ under tools/python3.
+        get_filename_component(BLUE_INVOKE_TEST_PYTHON_HOME "${Python3_EXECUTABLE}" DIRECTORY)
+    else()
+        list(GET Python3_LIBRARY_DIRS 0 _py_libdir)
+        get_filename_component(BLUE_INVOKE_TEST_PYTHON_HOME "${_py_libdir}" DIRECTORY)
+    endif()
 endif()
 message(STATUS "BlueInvoke tests: Python home ${BLUE_INVOKE_TEST_PYTHON_HOME}")
 
@@ -44,7 +49,9 @@ target_include_directories(invoke_tests PRIVATE
     $<TARGET_PROPERTY:BlueExposure,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:CcpCore,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(invoke_tests PRIVATE blue_invoke Python3::Python ${CMAKE_DL_LIBS})
-target_link_options(invoke_tests PRIVATE "LINKER:-rpath-link,${BLUE_INVOKE_TEST_PYTHON_HOME}/lib")
+if(NOT WIN32)
+    target_link_options(invoke_tests PRIVATE "LINKER:-rpath-link,${BLUE_INVOKE_TEST_PYTHON_HOME}/lib")
+endif()
 add_dependencies(invoke_tests invoke_test_classes invoke_test_unhooked invoke_test_otherid)
 set_target_properties(invoke_tests PROPERTIES FOLDER "Tests/Invoke")
 

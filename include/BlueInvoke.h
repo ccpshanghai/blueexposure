@@ -542,7 +542,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 	{
 		if( v.tag == BIV_INT || v.tag == BIV_BOOL ) // bool: Python's True/False are ints
 		{
-			if( v.v.i < static_cast<int64_t>( std::numeric_limits<T>::min() ) || v.v.i > static_cast<int64_t>( std::numeric_limits<T>::max() ) )
+			if( v.v.i < static_cast<int64_t>( ( std::numeric_limits<T>::min )() ) || v.v.i > static_cast<int64_t>( ( std::numeric_limits<T>::max )() ) )
 			{
 				return BlueInvokeFail( e, BIS_TYPE, "argument %d: %lld is out of range", arg, static_cast<long long>( v.v.i ) );
 			}
@@ -551,7 +551,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 		}
 		if( v.tag == BIV_UINT )
 		{
-			if( v.v.u > static_cast<uint64_t>( std::numeric_limits<T>::max() ) )
+			if( v.v.u > static_cast<uint64_t>( ( std::numeric_limits<T>::max )() ) )
 			{
 				return BlueInvokeFail( e, BIS_TYPE, "argument %d: %llu is out of range", arg, static_cast<unsigned long long>( v.v.u ) );
 			}
@@ -578,7 +578,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 	{
 		if( v.tag == BIV_UINT )
 		{
-			if( v.v.u > static_cast<uint64_t>( std::numeric_limits<T>::max() ) )
+			if( v.v.u > static_cast<uint64_t>( ( std::numeric_limits<T>::max )() ) )
 			{
 				return BlueInvokeFail( e, BIS_TYPE, "argument %d: %llu is out of range", arg, static_cast<unsigned long long>( v.v.u ) );
 			}
@@ -587,7 +587,7 @@ struct BlueInvokeConv<T, std::enable_if_t<std::is_integral<T>::value && std::is_
 		}
 		if( v.tag == BIV_INT || v.tag == BIV_BOOL ) // bool: Python's True/False are ints
 		{
-			if( v.v.i < 0 || static_cast<uint64_t>( v.v.i ) > static_cast<uint64_t>( std::numeric_limits<T>::max() ) )
+			if( v.v.i < 0 || static_cast<uint64_t>( v.v.i ) > static_cast<uint64_t>( ( std::numeric_limits<T>::max )() ) )
 			{
 				return BlueInvokeFail( e, BIS_TYPE, "argument %d: %lld is out of range", arg, static_cast<long long>( v.v.i ) );
 			}
