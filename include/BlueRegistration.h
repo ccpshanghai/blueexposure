@@ -270,17 +270,20 @@ public:
 
 struct EnumTypeRegistration
 {
+	// sourceName: T as written at the registration (BLUE_REGISTER_ENUM passes #_enum); the Invoke
+	// hook's enum table reports it when T has no declared canonical name (BlueInvokeName.h).
 	template< typename T > EnumTypeRegistration( const char* typeName, 
 												 const Be::VarChooser* c, 
 												 T t, 
-												 uint32_t registrationType )
+												 uint32_t registrationType,
+												 const char* sourceName = nullptr )
 	{
 		std::string s( typeName );
 		std::pair<uint32_t,GetEnumValuesFunctionTypePtr> v =  std::make_pair(
 			registrationType,
 			&EnumRegistration<T>::GetValues );
 		BlueRegistration::GetEnumRegs().insert( EnumTypeRegistrationValues( s, v ) );
-		BLUE_INVOKE_REGISTER_ENUM( typeName, T, c );
+		BLUE_INVOKE_REGISTER_ENUM( typeName, T, c, sourceName );
 
 		while( c->mKey )
 		{
@@ -303,10 +306,10 @@ struct EnumTypeRegistration
 };
 // BLUE_REGISTER_ENUM( exposedEnumName, enum, chooser ): Register enums to expose them to Python
 #define BLUE_REGISTER_ENUM( _exposedEnumName, _enum, _enumChooser ) \
-	static EnumTypeRegistration s_##_enumChooser##Registrar( _exposedEnumName, &_enumChooser[0], _enum(), ENUM_REG_VALUES_ON_MODULE )
+	static EnumTypeRegistration s_##_enumChooser##Registrar( _exposedEnumName, &_enumChooser[0], _enum(), ENUM_REG_VALUES_ON_MODULE, #_enum )
 
 #define BLUE_REGISTER_ENUM_EX( _exposedEnumName, _enum, _enumChooser, enumExposureOptions ) \
-	static EnumTypeRegistration s_##_enumChooser##Registrar( _exposedEnumName, &_enumChooser[0], _enum(), enumExposureOptions )
+	static EnumTypeRegistration s_##_enumChooser##Registrar( _exposedEnumName, &_enumChooser[0], _enum(), enumExposureOptions, #_enum )
 
 class ModuleObjectRegistrar
 {

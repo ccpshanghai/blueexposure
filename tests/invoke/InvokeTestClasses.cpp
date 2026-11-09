@@ -150,6 +150,15 @@ Be::VarChooser InvokeTestModeChooser[] = {
 
 BLUE_REGISTER_ENUM( INVOKE_TEST_MODULE "_MODE", InvokeTestObj::Mode, InvokeTestModeChooser );
 
+// No canonical name declared for Level: its table's typeName is "InvokeTestObj::Level" as written here.
+Be::VarChooser InvokeTestLevelChooser[] = {
+	{ "LEVEL_LOW", { BeCast( InvokeTestObj::LEVEL_LOW ) }, "low" },
+	{ "LEVEL_HIGH", { BeCast( InvokeTestObj::LEVEL_HIGH ) }, "high" },
+	{ 0 },
+};
+
+BLUE_REGISTER_ENUM( INVOKE_TEST_MODULE "_LEVEL", InvokeTestObj::Level, InvokeTestLevelChooser );
+
 const Be::ClassInfo* InvokeTestObj::ExposeToBlue()
 {
 	EXPOSURE_BEGIN( InvokeTestObj, "carbon-bind Invoke hook test class" )
@@ -273,6 +282,49 @@ static_assert( kProbeProp.get != nullptr && kProbeProp.set != nullptr && kProbeP
 static_assert( std::is_standard_layout<BlueInvokeValue>::value && std::is_trivially_copyable<BlueInvokeMethod>::value &&
 				   std::is_trivially_destructible<BlueInvokeProperty>::value,
 			   "entries are PODs" );
+
+// Golden values: canonical names are declared in the source, so names and sigHash are the same on
+// every compiler. The literals were computed outside the compiler (FNV-1a 64 over the recipe in
+// BlueInvokeFillArgs / BlueInvokeMakeProperty); a change here is a change of the hook's ABI.
+constexpr bool InvokeTestStrEq( const char* a, const char* b )
+{
+	while( *a && *a == *b )
+	{
+		++a;
+		++b;
+	}
+	return *a == *b;
+}
+namespace InvokeTestNs
+{
+enum Kind
+{
+	KIND_A = 0,
+};
+BLUE_INVOKE_CANONICAL_NAME( Kind, "InvokeTestNs::Kind" );
+} // namespace InvokeTestNs
+struct InvokeTestUnnamed : InvokeTestObj
+{
+};
+static_assert( InvokeTestStrEq( BlueInvokeCanonicalName<InvokeTestObj>::value, "InvokeTestObj" ), "class name (BLUE_CLASS)" );
+static_assert( InvokeTestStrEq( BlueInvokeCanonicalName<InvokeTestDerived>::value, "InvokeTestDerived" ), "class name (BLUE_DECLARE)" );
+static_assert( InvokeTestStrEq( BlueInvokeCanonicalName<IRoot>::value, "IRoot" ), "interface name" );
+static_assert( InvokeTestStrEq( BlueInvokeCanonicalName<InvokeTestObj::Mode>::value, "InvokeTestObj::Mode" ), "nested enum name" );
+static_assert( BlueInvokeCanonicalName<InvokeTestObj::Mode>::hash == 0xa5486c3686196a8dull, "FNV-1a of the enum name" );
+static_assert( BlueInvokeCanonicalName<InvokeTestObj>::hash == 0x1deeb1828823e092ull, "FNV-1a of the class name" );
+static_assert( !BlueInvokeHasCanonicalName<InvokeTestObj::Level>(), "Level declares no name" );
+static_assert( InvokeTestStrEq( BlueInvokeCanonicalName<InvokeTestNs::Kind>::value, "InvokeTestNs::Kind" ) &&
+				   BlueInvokeCanonicalName<InvokeTestNs::Kind>::hash == 0xa1269286b9f3d3f4ull,
+			   "namespaced enum name, declared inside its namespace (found through the enum's namespace)" );
+static_assert( !BlueInvokeHasCanonicalName<InvokeTestUnnamed>(), "a class derived from a named one does not take its name" );
+static_assert( kProbeInt.sigHash == 0x8f3c0b19fc075764ull, "sigHash int(int)" );
+static_assert( kProbeMode.sigHash == 0x9d5a1332386f4df7ull, "sigHash int(InvokeTestObj::Mode)" );
+static_assert( kProbeOther.sigHash == 0x285c68c65cbb9e00ull, "sigHash int(InvokeTestObj::Other)" );
+static_assert( kProbeObj.sigHash == 0x775d63be6c66ff3cull, "sigHash InvokeTestObj*(InvokeTestObj*)" );
+static_assert( kProbeProp.sigHash == 0xd67d14147623fc1cull, "sigHash of property InvokeTestObj::Mode" );
+static_assert( InvokeTestStrEq( kProbeMode.argTypeNames[1], "InvokeTestObj::Mode" ) && InvokeTestStrEq( kProbeObj.argTypeNames[0], "InvokeTestObj" ) &&
+				   InvokeTestStrEq( kProbeProp.typeName, "InvokeTestObj::Mode" ),
+			   "entries report canonical names" );
 #endif
 
 // Conversions that the exposure macros cannot reach (the Python path has no extractor for them).
