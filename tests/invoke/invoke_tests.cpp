@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CCP Games
 //
 // Driver for the Invoke hook's tests. Initialises an embedded Python (exposure needs it at static
-// init), dlopen()s the three test DSOs and checks the registry and every thunk through the C API
+// init), loads the three test DSOs (dlopen; LoadLibrary on Windows) and checks the registry and every thunk through the C API
 // only: this file sees the layouts, never the test classes.
 
 #define BLUE_INVOKE_C_API_ONLY 1
@@ -9,7 +9,13 @@
 #include "BlueTypes.h" // IRoot's interface (Lock/Unlock/GetRefCount); no Blue code is linked
 
 #include <Python.h>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -48,16 +54,28 @@ struct Lib
 Lib Load( const char* path )
 {
 	Lib l;
+#ifdef _WIN32
+	HMODULE module = LoadLibraryA( path );
+	l.handle = module;
+	if( !module )
+	{
+		std::fprintf( stderr, "LoadLibrary %s: error %lu\n", path, GetLastError() );
+		return l;
+	}
+	auto sym = [module]( const char* name ) { return reinterpret_cast<void*>( GetProcAddress( module, name ) ); };
+#else
 	l.handle = dlopen( path, RTLD_NOW | RTLD_LOCAL );
 	if( !l.handle )
 	{
 		std::fprintf( stderr, "dlopen %s: %s\n", path, dlerror() );
 		return l;
 	}
-	l.create = reinterpret_cast<IRoot* ( * )( const char* )>( dlsym( l.handle, "invoke_test_create" ) );
-	l.modeType = reinterpret_cast<const std::type_info* ( * )()>( dlsym( l.handle, "invoke_test_mode_type" ) );
-	l.otherType = reinterpret_cast<const std::type_info* ( * )()>( dlsym( l.handle, "invoke_test_other_type" ) );
-	l.direct = reinterpret_cast<int ( * )( char*, size_t )>( dlsym( l.handle, "invoke_test_direct" ) );
+	auto sym = [&l]( const char* name ) { return dlsym( l.handle, name ); };
+#endif
+	l.create = reinterpret_cast<IRoot* ( * )( const char* )>( sym( "invoke_test_create" ) );
+	l.modeType = reinterpret_cast<const std::type_info* ( * )()>( sym( "invoke_test_mode_type" ) );
+	l.otherType = reinterpret_cast<const std::type_info* ( * )()>( sym( "invoke_test_other_type" ) );
+	l.direct = reinterpret_cast<int ( * )( char*, size_t )>( sym( "invoke_test_direct" ) );
 	return l;
 }
 

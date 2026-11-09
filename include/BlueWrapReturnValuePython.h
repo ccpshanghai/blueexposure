@@ -67,6 +67,14 @@ inline BlueScriptValue BlueWrapReturnValueImpl( BlueScriptArguments args, long v
 {
 	return PyLong_FromLong( val );
 }
+#elif defined(_MSC_VER)
+// long is a 32-bit type of its own on Windows (int32_t is int), so a long return value matched
+// every overload above equally (C2668; e.g. trinity's long Tr2DepthStencil::Create). Elsewhere
+// long is int64_t (LP64) and needs no overload of its own.
+inline BlueScriptValue BlueWrapReturnValueImpl( BlueScriptArguments args, long val )
+{
+	return PyLong_FromLong( val );
+}
 #endif
 
 inline BlueScriptValue BlueWrapReturnValueImpl( BlueScriptArguments args, float val )

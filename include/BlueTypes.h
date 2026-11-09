@@ -590,8 +590,17 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 #define BLUE_INTERFACE_VISIBILITY
 #endif
 
+#if defined(_MSC_VER)
+// MSVC needs no key function (see above), and blue.dll does not export one: an out-of-line anchor
+// made every DLL that implements these interfaces pull InterfaceDefinitions.obj out of the
+// BlueExposure archive, whose IID functions blue.dll already exports (LNK2005). The inline body
+// keeps the same last vtable slot as on the other platforms.
+#define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor() {}
+#define BLUE_DEFINE_INTERFACE_ANCHOR( _interface )
+#else
 #define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor()
 #define BLUE_DEFINE_INTERFACE_ANCHOR( _interface ) void _interface::BlueInterfaceAnchor() {}
+#endif
 
 // Define a Blue interface whose vtable and typeinfo live in blue (see BLUE_INTERFACE_ANCHOR)
 #define BLUE_INTERFACE_ANCHORED( _interface ) \
