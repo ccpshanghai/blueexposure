@@ -585,15 +585,28 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 	BLUE_DECLARE_INTERFACE_NO_PTR_EXPORT( _interface ); \
 	typedef BluePtr<struct _interface> _interface##Ptr
 
+// Apple: every Blue interface keeps default visibility. arm64 Apple's libc++abi compares
+// type_info by address, and a pure interface has no key function, so each library built with
+// -fvisibility=hidden holds its own hidden typeinfo for it; a dynamic_cast to the interface in one
+// library on an object of another then fails (carbon-bind macOS: the Invoke hook's cast of
+// carbon-bind's CarbonBindUpdateable to trinity's ITr2Updateable, TriStepUpdate's __init__).
+// Default-visible copies are weak exports that dyld coalesces into one. Other hosts are unchanged
+// (libstdc++ and MSVC compare by name; Android's interfaces that blue casts to are anchored below).
+#if defined(__APPLE__)
+#define BLUE_INTERFACE_TYPE_VISIBILITY BLUE_INTERFACE_VISIBILITY
+#else
+#define BLUE_INTERFACE_TYPE_VISIBILITY
+#endif
+
 // Define a Blue interface 
 #define BLUE_INTERFACE( _interface ) \
 	BLUE_DECLARE_INTERFACE( _interface ); \
-	struct BLUE_NOVTABLE _interface
+	struct BLUE_INTERFACE_TYPE_VISIBILITY BLUE_NOVTABLE _interface
 
 // Define a Blue interface 
 #define BLUE_INTERFACE_EXPORT( _interface ) \
 	BLUE_DECLARE_INTERFACE_EXPORT( _interface ); \
-	struct BLUE_NOVTABLE _interface
+	struct BLUE_INTERFACE_TYPE_VISIBILITY BLUE_NOVTABLE _interface
 
 // An interface that blue itself dynamic_casts to -- from code compiled into blue.so, on an
 // object created in another shared object -- has to keep its vtable and typeinfo in one
