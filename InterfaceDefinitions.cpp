@@ -33,6 +33,9 @@ BLUE_DEFINE_INTERFACE_EXPORT( ICustomPersist );
 BLUE_DEFINE_INTERFACE_ANCHOR( IList );
 BLUE_DEFINE_INTERFACE_ANCHOR( IPythonMethods );
 BLUE_DEFINE_INTERFACE_ANCHOR( IPythonNumeric );
+#if !defined(_MSC_VER)
+void IRoot::BlueRootAnchor() {}
+#endif
 
 BLUE_DEFINE_CLSID_EXPORT( "blue", List );
 BLUE_DEFINE_CLSID_EXPORT( "blue", Dict );
