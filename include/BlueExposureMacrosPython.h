@@ -1,5 +1,7 @@
 // Copyright (c) 2026 CCP Games
 
+#include "BlueInvoke.h"
+
 // Call this macro in a public section of your class declaration, then implement one static method in a cpp file:
 //
 // const Be::ClassInfo* <ClassName>::ExposeToBlue()
@@ -39,7 +41,8 @@
 	Be::InterfaceEntry rootEntry = {&s_iroot, BLUE_INTERFACEOFFSET(_Class)}; \
 	s_interfaces.push_back( rootEntry ); \
 	Be::InterfaceEntry myEntry = {&s_iid, BLUE_INTERFACEOFFSET(_Class)}; \
-	s_interfaces.push_back( myEntry );
+	s_interfaces.push_back( myEntry ); \
+	BLUE_INVOKE_BEGIN_CLASS();
 
 #define EXPOSURE_END_IMPL(_parentclasstype, _parentoffs)\
 	Be::VarEntry attributesEndItem = { 0 }; \
@@ -65,6 +68,7 @@
 	BlueRegisterPyMethodDefs( &_classinfo, &s_methods); \
 	_classinfo.mPyMethodTable = _classinfo.mTypeObject->tp_methods; \
 	BlueRegisterPyMemberDefs( &_classinfo, &s_memberDefs ); \
+	BLUE_INVOKE_END_CLASS( _tmpclsid, &_classinfo ); \
     \
 	s_classInfo = &_classinfo; \
 	return &_classinfo;
@@ -135,6 +139,7 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 	PyMethodDef d = { name, &BlueMethodHelper<decltype(&_Class::functionName), &_Class::functionName>, METH_VARARGS, docString };\
 	s_methods.push_back( d );\
 	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName ); \
+	BLUE_INVOKE_ADD_METHOD( name, functionName, 0 ); \
 }
 
 #define MAP_METHOD_AND_WRAP_OPTIONAL_ARGS( name, functionName, numOptional, docString ) \
@@ -142,6 +147,7 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 	PyMethodDef d = { name, &BlueMethodHelperWithOptionalArgs<decltype(&_Class::functionName), &_Class::functionName, numOptional>, METH_VARARGS, docString };\
 	s_methods.push_back( d );\
 	s_signatures[name] = BlueGetFunctionSignature( &_Class::functionName, numOptional ); \
+	BLUE_INVOKE_ADD_METHOD( name, functionName, numOptional ); \
 }
 
 // MAP_METHOD_AS_METHOD maps a member function with the signature
@@ -193,6 +199,7 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
 		BluePropertySetter<_Class, decltype(&_Class::setterFunction), &_Class::setterFunction> }; \
  	s_attributes.push_back( d );\
+	BLUE_INVOKE_ADD_PROPERTY( nameString, getterFunction, setterFunction ); \
 }
 
 // Map a read-only property with the given name with a getterFunction
@@ -210,6 +217,7 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
 		nullptr }; \
  	s_attributes.push_back( d );\
+	BLUE_INVOKE_ADD_PROPERTY_RO( nameString, getterFunction ); \
 }
 
 // Map a persisted property with the given name with a getterFunction and a setterFunction
@@ -227,6 +235,7 @@ BLUEIMPORT PyObject* BlueCreateInstanceFromPython( const Be::Clsid& clsid, PyObj
 		BluePropertyGetter<_Class, decltype(&_Class::getterFunction), &_Class::getterFunction>, \
 		BluePropertySetter<_Class, decltype(&_Class::setterFunction), &_Class::setterFunction> }; \
  	s_attributes.push_back( d );\
+	BLUE_INVOKE_ADD_PROPERTY( nameString, getterFunction, setterFunction ); \
 }
 
 #ifdef _WIN32

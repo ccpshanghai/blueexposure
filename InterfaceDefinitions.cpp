@@ -6,9 +6,6 @@
 //
 
 #include "include/BlueExposureMacros.h"
-#include "include/IList.h"
-#include "include/IPythonMethods.h"
-#include "include/IPythonNumeric.h"
 
 BLUE_DEFINE_INTERFACE_IMPL_EXPORT( IRoot );
 BLUE_DEFINE_INTERFACE_EXPORT( INotify );
@@ -26,10 +23,19 @@ BLUE_DEFINE_INTERFACE_EXPORT( ICopierCustomAssignment );
 BLUE_DEFINE_INTERFACE_EXPORT( ICustomPersist );
 
 // The key functions of the interfaces blue dynamic_casts to across shared objects; see
-// BLUE_INTERFACE_ANCHOR in BlueTypes.h.
+// BLUE_INTERFACE_ANCHOR in BlueTypes.h. Their headers are included only here, after the
+// exported definitions above: they declare IListNotify, IPythonMethods and IPythonNumeric
+// without BLUEIMPORT, and MSVC rejects a dllexport definition after such a declaration
+// (C2375, different linkage).
+#include "include/IList.h"
+#include "include/IPythonMethods.h"
+#include "include/IPythonNumeric.h"
 BLUE_DEFINE_INTERFACE_ANCHOR( IList );
 BLUE_DEFINE_INTERFACE_ANCHOR( IPythonMethods );
 BLUE_DEFINE_INTERFACE_ANCHOR( IPythonNumeric );
+#if !defined(_MSC_VER)
+void IRoot::BlueRootAnchor() {}
+#endif
 
 BLUE_DEFINE_CLSID_EXPORT( "blue", List );
 BLUE_DEFINE_CLSID_EXPORT( "blue", Dict );
