@@ -11,6 +11,7 @@
 
 #include <CcpCore.h>
 #include "BlueScriptValue.h"
+#include "BlueInvokeName.h"
 
 #if !BLUE_WITH_PYTHON
 #ifndef __ANDROID__
@@ -455,13 +456,17 @@ template<typename T> const Be::IID& BlueInterfaceIID();
 
 // Declare an interface without the smart pointer typedef
 // This is needed to declare IRoot so it can be used in further definitions.
+// Each also declares the Invoke hook's canonical name of the type: the macro argument, as Blue
+// registers it (BlueInvokeName.h).
 #define BLUE_DECLARE_INTERFACE_NO_PTR(_interface)											\
+	BLUE_INVOKE_CANONICAL_NAME( _interface, #_interface );									\
 	const Be::IID& Get##_interface##IID();													\
 	template<> const Be::IID& BlueInterfaceIID< _interface >()
 
 // Declare an interface without the smart pointer typedef
 // This is needed to declare IRoot so it can be used in further definitions.
 #define BLUE_DECLARE_INTERFACE_NO_PTR_EXPORT(_interface) \
+	BLUE_INVOKE_CANONICAL_NAME( _interface, #_interface ); \
 	BLUEIMPORT const Be::IID& Get##_interface##IID(); \
 	template<> BLUEIMPORT const Be::IID& BlueInterfaceIID<_interface>()
 
@@ -480,7 +485,20 @@ enum BLUERTFLAGS
 struct IRoot;
 BLUE_DECLARE_INTERFACE_NO_PTR_EXPORT( IRoot );
 
-struct BLUE_NOVTABLE IRoot
+// Exports an anchored interface's vtable and typeinfo; see BLUE_INTERFACE_ANCHOR below.
+#if defined(__GNUC__) || defined(__clang__)
+#define BLUE_INTERFACE_VISIBILITY __attribute__((visibility("default")))
+#else
+#define BLUE_INTERFACE_VISIBILITY
+#endif
+
+// IRoot is anchored like IList (BLUE_INTERFACE_ANCHOR below), under its own name so that IList's
+// anchor stays a slot of its own instead of overriding this one. Every engine method call from
+// Python dynamic_casts the IRoot* it unwrapped to the class (BlueMethodHelper); with one hidden
+// IRoot typeinfo per library, a class that reaches IRoot through a class of blue.so and through a
+// second base (TriGrannyRes: BlueAsyncRes and ICacheable) is matched against the wrong copy by
+// the NDK's libc++abi and the cast is nullptr (carbon-bind Android, m2 granny_create_geometry_res).
+struct BLUE_INTERFACE_VISIBILITY BLUE_NOVTABLE IRoot
 {
 	virtual const Be::ClassInfo* ClassType() const = 0;
 
@@ -508,6 +526,14 @@ protected:
 	// added to a list - this list is then processed once per frame.
 	friend class BlueClasses;
 	virtual void FinalDelete() = 0;
+
+public:
+	// Key function (InterfaceDefinitions.cpp); last on purpose. MSVC: inline, see BLUE_INTERFACE_ANCHOR.
+#if defined(_MSC_VER)
+	virtual void BlueRootAnchor() {}
+#else
+	virtual void BlueRootAnchor();
+#endif
 };
 
 //--------------------------------------------------------------------
@@ -559,15 +585,28 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 	BLUE_DECLARE_INTERFACE_NO_PTR_EXPORT( _interface ); \
 	typedef BluePtr<struct _interface> _interface##Ptr
 
+// Apple: every Blue interface keeps default visibility. arm64 Apple's libc++abi compares
+// type_info by address, and a pure interface has no key function, so each library built with
+// -fvisibility=hidden holds its own hidden typeinfo for it; a dynamic_cast to the interface in one
+// library on an object of another then fails (carbon-bind macOS: the Invoke hook's cast of
+// carbon-bind's CarbonBindUpdateable to trinity's ITr2Updateable, TriStepUpdate's __init__).
+// Default-visible copies are weak exports that dyld coalesces into one. Other hosts are unchanged
+// (libstdc++ and MSVC compare by name; Android's interfaces that blue casts to are anchored below).
+#if defined(__APPLE__)
+#define BLUE_INTERFACE_TYPE_VISIBILITY BLUE_INTERFACE_VISIBILITY
+#else
+#define BLUE_INTERFACE_TYPE_VISIBILITY
+#endif
+
 // Define a Blue interface 
 #define BLUE_INTERFACE( _interface ) \
 	BLUE_DECLARE_INTERFACE( _interface ); \
-	struct BLUE_NOVTABLE _interface
+	struct BLUE_INTERFACE_TYPE_VISIBILITY BLUE_NOVTABLE _interface
 
 // Define a Blue interface 
 #define BLUE_INTERFACE_EXPORT( _interface ) \
 	BLUE_DECLARE_INTERFACE_EXPORT( _interface ); \
-	struct BLUE_NOVTABLE _interface
+	struct BLUE_INTERFACE_TYPE_VISIBILITY BLUE_NOVTABLE _interface
 
 // An interface that blue itself dynamic_casts to -- from code compiled into blue.so, on an
 // object created in another shared object -- has to keep its vtable and typeinfo in one
@@ -584,14 +623,17 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 // (InterfaceDefinitions.cpp, inside blue), and BLUE_INTERFACE_VISIBILITY exports them so
 // every other library imports that one copy instead of making its own. The slot is last in
 // each interface and does nothing; the rest of every implementer's vtable is unchanged.
-#if defined(__GNUC__) || defined(__clang__)
-#define BLUE_INTERFACE_VISIBILITY __attribute__((visibility("default")))
+#if defined(_MSC_VER)
+// MSVC needs no key function (see above), and blue.dll does not export one: an out-of-line anchor
+// made every DLL that implements these interfaces pull InterfaceDefinitions.obj out of the
+// BlueExposure archive, whose IID functions blue.dll already exports (LNK2005). The inline body
+// keeps the same last vtable slot as on the other platforms.
+#define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor() {}
+#define BLUE_DEFINE_INTERFACE_ANCHOR( _interface )
 #else
-#define BLUE_INTERFACE_VISIBILITY
-#endif
-
 #define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor()
 #define BLUE_DEFINE_INTERFACE_ANCHOR( _interface ) void _interface::BlueInterfaceAnchor() {}
+#endif
 
 // Define a Blue interface whose vtable and typeinfo live in blue (see BLUE_INTERFACE_ANCHOR)
 #define BLUE_INTERFACE_ANCHORED( _interface ) \

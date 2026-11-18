@@ -689,10 +689,10 @@ struct TypeSignature<unsigned long>
 		return "long";
 	}
 };
-// bionic spells int64_t as long on 64-bit Android, so a separate long specialisation is a
+// glibc and bionic spell int64_t as long on LP64, so a separate long specialisation is a
 // redefinition of the int64_t one. Apple uses long long and Windows keeps long at 32 bits,
-// and 32-bit Android needs it too -- so only arm64 Android is excluded here.
-#elif !( defined(__ANDROID__) && defined(__LP64__) )
+// and 32-bit targets need it too -- so only non-Apple LP64 is excluded here.
+#elif !( defined(__LP64__) && !defined(__APPLE__) )
 template <>
 struct TypeSignature<long>
 {
