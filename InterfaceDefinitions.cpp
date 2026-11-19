@@ -6,9 +6,11 @@
 //
 
 #include "include/BlueExposureMacros.h"
+#if !defined( _MSC_VER )
 #include "include/IList.h"
 #include "include/IPythonMethods.h"
 #include "include/IPythonNumeric.h"
+#endif
 
 BLUE_DEFINE_INTERFACE_IMPL_EXPORT( IRoot );
 BLUE_DEFINE_INTERFACE_EXPORT( INotify );
@@ -24,6 +26,15 @@ BLUE_DEFINE_INTERFACE_EXPORT( IPythonNumeric );
 BLUE_DEFINE_INTERFACE_EXPORT( ICopier );
 BLUE_DEFINE_INTERFACE_EXPORT( ICopierCustomAssignment );
 BLUE_DEFINE_INTERFACE_EXPORT( ICustomPersist );
+
+#if defined( _MSC_VER )
+// MSVC: included after the exported definitions above. Included first, these headers declare
+// GetIListNotifyIID, GetIPythonMethodsIID and GetIPythonNumericIID without BLUEIMPORT, and the
+// BLUEIMPORT definitions above are then C2375 (redefinition; different linkage).
+#include "include/IList.h"
+#include "include/IPythonMethods.h"
+#include "include/IPythonNumeric.h"
+#endif
 
 // The key functions of the interfaces blue dynamic_casts to across shared objects; see
 // BLUE_INTERFACE_ANCHOR in BlueTypes.h.

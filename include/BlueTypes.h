@@ -590,8 +590,18 @@ BLUEIMPORT const Be::IID& GetIWeakObjectIID();
 #define BLUE_INTERFACE_VISIBILITY
 #endif
 
+#if defined( _MSC_VER )
+// MSVC emits a vtable in every translation unit that needs one and has no key-function rule, and
+// BLUE_INTERFACE_VISIBILITY is empty here, so an out-of-line anchor is an unexported symbol that
+// every module seeing one of these vtables needs: the linker pulls InterfaceDefinitions.obj out of
+// BlueExposure.lib into each consumer, and its exported IID getters collide with blue's (LNK2005).
+// Inline on MSVC: the vtable slot stays, nothing is pulled.
+#define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor() {}
+#define BLUE_DEFINE_INTERFACE_ANCHOR( _interface )
+#else
 #define BLUE_INTERFACE_ANCHOR() virtual void BlueInterfaceAnchor()
 #define BLUE_DEFINE_INTERFACE_ANCHOR( _interface ) void _interface::BlueInterfaceAnchor() {}
+#endif
 
 // Define a Blue interface whose vtable and typeinfo live in blue (see BLUE_INTERFACE_ANCHOR)
 #define BLUE_INTERFACE_ANCHORED( _interface ) \
